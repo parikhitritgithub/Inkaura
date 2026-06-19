@@ -1,10 +1,16 @@
 const { Pool } = require("pg");
 
-const isProduction = process.env.DATABASE_URL?.includes("render.com");
+const connectionString = process.env.DATABASE_URL;
+
+// Enable SSL for remote hosts (Supabase, Render, etc.)
+const requiresSSL =
+  connectionString?.includes("supabase.com") ||
+  connectionString?.includes("supabase.co") ||
+  connectionString?.includes("render.com");
 
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ...(isProduction && { ssl: { rejectUnauthorized: false } }),
+  connectionString,
+  ...(requiresSSL && { ssl: { rejectUnauthorized: false } }),
 });
 
 // Test connection on startup
