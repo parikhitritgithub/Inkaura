@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Printer, Eye, EyeOff, Lock, Mail, Moon, Sun } from "lucide-react";
+import { supabase } from "@/lib/supabase";
 
 interface LoginPageProps {
   onLogin: () => void;
@@ -21,19 +22,20 @@ export function LoginPage({ onLogin, darkMode, onToggleDark }: LoginPageProps) {
     if (!email || !password) { setError("Please enter your credentials."); return; }
     setLoading(true);
     try {
-      const res = await fetch("http://localhost:5000/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+      const { data, error: authError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
       });
-      const json = await res.json();
-      if (!json.success) { setError(json.message || "Login failed."); setLoading(false); return; }
-      localStorage.setItem("token", json.token);
-      localStorage.setItem("user", JSON.stringify(json.user));
+      if (authError) { setError(authError.message); setLoading(false); return; }
+      // Store session info for backward-compat (Supabase also stores in localStorage automatically)
+      if (data.session) {
+        localStorage.setItem("token", data.session.access_token);
+        localStorage.setItem("user", JSON.stringify(data.user));
+      }
       setLoading(false);
       onLogin();
     } catch {
-      setError("Cannot connect to server.");
+      setError("Cannot connect to Supabase.");
       setLoading(false);
     }
   };

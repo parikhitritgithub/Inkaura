@@ -4,8 +4,7 @@ import {
   Phone, Mail, Building, CheckCircle, XCircle, Eye, EyeOff,
   ChevronDown, X, AlertTriangle, UserCog, MoreHorizontal
 } from "lucide-react";
-
-const API = "http://localhost:5000/api";
+import { supabase } from "@/lib/supabase";
 
 const ROLES = [
   { value: "ADMIN", label: "Admin", color: "bg-indigo-100 text-indigo-700 border-indigo-200" },
@@ -83,29 +82,36 @@ export function EmployeeManagement() {
   const [successMsg, setSuccessMsg] = useState("");
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
 
-  const token = localStorage.getItem("token") || "";
-
-  const headers = useCallback(() => ({
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${token}`,
-  }), [token]);
-
   const fetchEmployees = useCallback(async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams();
-      if (search) params.set("search", search);
-      if (roleFilter) params.set("role", roleFilter);
-      if (statusFilter) params.set("status", statusFilter);
-      const res = await fetch(`${API}/employees?${params}`, { headers: headers() });
-      const json = await res.json();
-      if (json.success) {
-        setEmployees(json.data);
-        setTotal(json.total);
+      let query = supabase.from("employees").select("*", { count: "exact" });
+
+      if (search) {
+        query = query.or(`name.ilike.%${search}%,email.ilike.%${search}%,phone.ilike.%${search}%`);
+      }
+      if (roleFilter) {
+        query = query.eq("role", roleFilter);
+      }
+      if (statusFilter === "active") {
+        query = query.eq("is_active", true);
+      } else if (statusFilter === "inactive") {
+        query = query.eq("is_active", false);
+      }
+
+      query = query.order("created_at", { ascending: false });
+
+      const { data, count, error: fetchError } = await query;
+
+      if (fetchError) {
+        console.error("Supabase fetch error:", fetchError.message);
+      } else {
+        setEmployees(data || []);
+        setTotal(count || 0);
       }
     } catch { /* ignore */ }
     setLoading(false);
-  }, [search, roleFilter, statusFilter, headers]);
+  }, [search, roleFilter, statusFilter]);
 
   useEffect(() => { fetchEmployees(); }, [fetchEmployees]);
 
@@ -124,12 +130,32 @@ export function EmployeeManagement() {
     if (!editingId && !form.password) { setError("Password is required for new employees."); return; }
     setSaving(true); setError("");
     try {
-      const body: Record<string, unknown> = { name: form.name, email: form.email, phone: form.phone, role: form.role, department: form.department };
-      if (form.password) body.password = form.password;
-      const url = editingId ? `${API}/employees/${editingId}` : `${API}/employees`;
-      const res = await fetch(url, { method: editingId ? "PUT" : "POST", headers: headers(), body: JSON.stringify(body) });
-      const json = await res.json();
-      if (!json.success) { setError(json.message); setSaving(false); return; }
+      const record: Record<string, unknown> = {
+        name: form.name,
+        email: form.email,
+        phone: form.phone || null,
+        role: form.role,
+        department: form.department || null,
+      };
+      // Note: password hashing should be handled via a Supabase DB function or Edge Function.
+      // For now we store it in plain text — set up a DB trigger for bcrypt hashing.
+      if (form.password) record.password = form.password;
+
+      if (editingId) {
+        // Update
+        const { error: updateError } = await supabase
+          .from("employees")
+          .update(record)
+          .eq("id", editingId);
+        if (updateError) { setError(updateError.message); setSaving(false); return; }
+      } else {
+        // Insert
+        const { error: insertError } = await supabase
+          .from("employees")
+          .insert(record);
+        if (insertError) { setError(insertError.message); setSaving(false); return; }
+      }
+
       setShowModal(false);
       setSuccessMsg(editingId ? "Employee updated!" : "Employee created!");
       fetchEmployees();
@@ -139,17 +165,21 @@ export function EmployeeManagement() {
 
   const handleToggleStatus = async (emp: Employee) => {
     try {
-      await fetch(`${API}/employees/${emp.id}`, {
-        method: "PUT", headers: headers(),
-        body: JSON.stringify({ is_active: !emp.is_active }),
-      });
+      await supabase
+        .from("employees")
+        .update({ is_active: !emp.is_active })
+        .eq("id", emp.id);
       fetchEmployees();
     } catch { /* ignore */ }
   };
 
   const handleDelete = async (id: string) => {
     try {
-      await fetch(`${API}/employees/${id}`, { method: "DELETE", headers: headers() });
+      // Soft-delete: deactivate instead of removing
+      await supabase
+        .from("employees")
+        .update({ is_active: false })
+        .eq("id", id);
       setDeleteConfirm(null);
       setSuccessMsg("Employee deactivated.");
       fetchEmployees();
