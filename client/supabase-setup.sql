@@ -55,3 +55,19 @@ CREATE POLICY "Authenticated users can delete employees"
 -- ─── 4. Seed Data ──────────────────────────────────────────────────────────
 INSERT INTO employees (name, email, role, department, phone) VALUES
  
+ -- ============================================================
+-- DATA FIXES
+-- ============================================================
+
+-- Fix empty product names in quotation_products
+UPDATE quotation_products 
+SET product_name = 'Custom Print Job'
+WHERE (product_name IS NULL OR product_name = '');
+
+-- ============================================================
+-- CONSTRAINTS TO PREVENT EMPTY PRODUCT NAMES IN FUTURE
+-- ============================================================
+
+ALTER TABLE quotation_products 
+ADD CONSTRAINT chk_product_name_not_empty 
+CHECK (product_name IS NOT NULL AND product_name != '');
