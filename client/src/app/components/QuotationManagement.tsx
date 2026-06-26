@@ -1,20 +1,22 @@
-import { useState } from "react";
-import { Plus, FileText, CheckCircle, Clock, XCircle, Printer, Download, Send, ChevronDown, Trash2, X } from "lucide-react";
-
-const quotations = [
-  { id: "QT-0089", customer: "Apex Beverages Ltd.", date: "Jun 16, 2026", validUntil: "Jun 30, 2026", items: [{ desc: "Label Printing 4C (5,000 units)", qty: 5000, rate: 8, total: 40000 }, { desc: "Lamination Gloss", qty: 5000, rate: 2, total: 10000 }, { desc: "Die-cutting", qty: 5000, rate: 3.5, total: 17500 }], subtotal: 67500, gst: 12150, total: 79650, status: "Approved" },
-  { id: "QT-0088", customer: "Metro Retail Group", date: "Jun 15, 2026", validUntil: "Jun 29, 2026", items: [{ desc: "Carton Box Offset (2,000 pcs)", qty: 2000, rate: 45, total: 90000 }, { desc: "UV Coating", qty: 2000, rate: 12, total: 24000 }], subtotal: 114000, gst: 20520, total: 134520, status: "Sent" },
-  { id: "QT-0087", customer: "FreshFarm Foods", date: "Jun 14, 2026", validUntil: "Jun 28, 2026", items: [{ desc: "Flexible Packaging Rotogravure", qty: 10000, rate: 4.5, total: 45000 }], subtotal: 45000, gst: 8100, total: 53100, status: "Draft" },
-  { id: "QT-0086", customer: "Sunrise Pharma", date: "Jun 14, 2026", validUntil: "Jun 28, 2026", items: [{ desc: "Blister Pack Foil (50,000 strips)", qty: 50000, rate: 3.2, total: 160000 }, { desc: "Carton Leaflet", qty: 50000, rate: 0.8, total: 40000 }], subtotal: 200000, gst: 36000, total: 236000, status: "Approved" },
-  { id: "QT-0085", customer: "Classic Gifts Co.", date: "Jun 13, 2026", validUntil: "Jun 27, 2026", items: [{ desc: "Gift Box Premium (500 pcs)", qty: 500, rate: 85, total: 42500 }], subtotal: 42500, gst: 7650, total: 50150, status: "Rejected" },
-];
+import { useState, useEffect } from "react";
+import { 
+  Plus, FileText, CheckCircle, Clock, XCircle, Printer, Download, Send, 
+  X, AlertCircle, Calendar, User, DollarSign, Activity, ChevronDown,
+  Package, Layers, ArrowRight, Lock, Copy, RefreshCcw, ThumbsUp 
+} from "lucide-react";
+import { api, QuotationData } from "../server/api";
+import { useNavigate } from "react-router-dom";
 
 function StatusBadge({ status }: { status: string }) {
   const s: Record<string, string> = {
-    Approved: "bg-green-50 text-green-700 border-green-200",
-    Sent: "bg-indigo-50 text-indigo-700 border-indigo-200",
-    Draft: "bg-slate-100 text-slate-600 border-slate-200",
-    Rejected: "bg-red-50 text-red-700 border-red-200",
+    "Approved": "bg-green-50 text-green-700 border-green-200",
+    "Sent": "bg-blue-50 text-blue-700 border-blue-200",
+    "Draft": "bg-slate-100 text-slate-600 border-slate-200",
+    "Rejected": "bg-red-50 text-red-700 border-red-200",
+    "Pending": "bg-amber-50 text-amber-700 border-amber-200",
+    "Revision": "bg-purple-50 text-purple-700 border-purple-200",
+    "Expired": "bg-slate-800 text-slate-100 border-slate-700",
+    "Cancelled": "bg-slate-100 text-slate-400 border-slate-200",
   };
   return (
     <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs border ${s[status] ?? "bg-slate-100 text-slate-600 border-slate-200"}`} style={{ fontWeight: 500 }}>
@@ -23,197 +25,356 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+const isLocked = (q: QuotationData) => {
+  return q.workflow.sampleOrder !== "N/A" || q.workflow.productionOrder !== "N/A";
+};
+
+const isCommerciallyCleared = (q: QuotationData) => {
+  const required = (q.commercials.total * q.commercials.advanceRequiredPct) / 100;
+  return q.commercials.advanceReceivedAmt >= required;
+};
+
 interface QuotationDetailProps {
-  quotation: typeof quotations[0];
+  quotation: QuotationData;
   onClose: () => void;
 }
 
 function QuotationDetail({ quotation: q, onClose }: QuotationDetailProps) {
+  const locked = isLocked(q);
+  const cleared = isCommerciallyCleared(q);
+  const requiredAdvance = (q.commercials.total * q.commercials.advanceRequiredPct) / 100;
+
   return (
-    <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
-          <div>
-            <h2 className="text-slate-900 text-sm" style={{ fontWeight: 700 }}>Quotation {q.id}</h2>
-            <p className="text-slate-400 text-xs mt-0.5">{q.customer}</p>
+    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[95vh] overflow-y-auto flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 sticky top-0 bg-white/95 backdrop-blur z-10">
+          <div className="flex items-center gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-slate-900 text-lg" style={{ fontWeight: 700 }}>{q.id}</h2>
+                <span className="text-xs bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded font-mono">{q.version}</span>
+                {locked && <Lock size={14} className="text-amber-500" title="Locked by downstream workflow" />}
+              </div>
+              <p className="text-slate-500 text-sm mt-0.5">{q.customer}</p>
+            </div>
+            <div className="h-8 w-px bg-slate-200 mx-2" />
+            <div className="flex flex-col gap-1">
+              <StatusBadge status={q.status} />
+              <div className="text-[10px] text-slate-400 flex items-center gap-1">
+                <User size={10} /> Owner: {q.owner}
+              </div>
+            </div>
           </div>
           <div className="flex items-center gap-2">
-            <StatusBadge status={q.status} />
-            <button onClick={onClose} className="text-slate-400 hover:text-slate-600 ml-2"><X size={18} /></button>
+            <button className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium">
+              <Download size={14} /> PDF
+            </button>
+            <button onClick={onClose} className="p-2 text-slate-400 hover:text-slate-700 bg-slate-50 hover:bg-slate-100 rounded-full transition-colors">
+              <X size={18} />
+            </button>
           </div>
         </div>
 
-        <div className="p-6 space-y-5">
-          <div className="grid grid-cols-2 gap-4 text-xs">
-            <div>
-              <p className="text-slate-400 mb-0.5">Customer</p>
-              <p className="text-slate-800" style={{ fontWeight: 600 }}>{q.customer}</p>
-            </div>
-            <div>
-              <p className="text-slate-400 mb-0.5">Quotation Date</p>
-              <p className="text-slate-800" style={{ fontWeight: 600 }}>{q.date}</p>
-            </div>
-            <div>
-              <p className="text-slate-400 mb-0.5">Valid Until</p>
-              <p className="text-slate-800" style={{ fontWeight: 600 }}>{q.validUntil}</p>
-            </div>
-            <div>
-              <p className="text-slate-400 mb-0.5">Payment Terms</p>
-              <p className="text-slate-800" style={{ fontWeight: 600 }}>50% Advance · 50% on delivery</p>
-            </div>
-          </div>
-
-          <div>
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="bg-slate-50 border border-slate-100 rounded-t-lg">
-                  {["Description", "Qty", "Rate (₹)", "Total (₹)"].map((h) => (
-                    <th key={h} className="text-left text-slate-500 px-3 py-2" style={{ fontWeight: 500 }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {q.items.map((item, i) => (
-                  <tr key={i} className="border-x border-b border-slate-100">
-                    <td className="px-3 py-2 text-slate-700">{item.desc}</td>
-                    <td className="px-3 py-2 text-slate-700">{item.qty.toLocaleString()}</td>
-                    <td className="px-3 py-2 text-slate-700">₹{item.rate.toFixed(2)}</td>
-                    <td className="px-3 py-2 text-slate-800" style={{ fontWeight: 600 }}>₹{item.total.toLocaleString()}</td>
-                  </tr>
+        <div className="p-6 grid grid-cols-1 lg:grid-cols-3 gap-6 overflow-y-auto bg-slate-50/50">
+          
+          {/* Main Column */}
+          <div className="lg:col-span-2 space-y-6">
+            
+            {/* Downstream Workflow Tracker */}
+            <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
+              <h3 className="text-sm font-semibold text-slate-900 mb-4 flex items-center gap-2">
+                <Activity size={16} className="text-indigo-500" /> Downstream Workflow
+              </h3>
+              <div className="flex items-center justify-between relative">
+                <div className="absolute left-0 top-1/2 -translate-y-1/2 w-full h-0.5 bg-slate-100" />
+                {[
+                  { label: "Sample", status: q.workflow.sampleOrder },
+                  { label: "Production", status: q.workflow.productionOrder },
+                  { label: "Dispatch", status: q.workflow.dispatch },
+                  { label: "Invoice", status: q.workflow.invoice },
+                  { label: "Closure", status: q.workflow.closure }
+                ].map((step, i) => (
+                  <div key={i} className="relative z-10 flex flex-col items-center gap-2 bg-white px-2">
+                    <div className={`w-8 h-8 rounded-full flex items-center justify-center border-2 text-xs font-bold
+                      ${step.status !== "N/A" && step.status !== "Pending" ? "bg-indigo-50 border-indigo-500 text-indigo-700" : "bg-white border-slate-200 text-slate-400"}
+                    `}>
+                      {i + 1}
+                    </div>
+                    <div className="text-center">
+                      <p className="text-xs font-medium text-slate-700">{step.label}</p>
+                      <p className="text-[10px] text-slate-500">{step.status}</p>
+                    </div>
+                  </div>
                 ))}
-              </tbody>
-            </table>
-            <div className="border-x border-b border-slate-100 rounded-b-lg">
-              <div className="flex justify-between px-3 py-1.5 text-xs border-t border-slate-50">
-                <span className="text-slate-500">Subtotal</span>
-                <span className="text-slate-800" style={{ fontWeight: 600 }}>₹{q.subtotal.toLocaleString()}</span>
-              </div>
-              <div className="flex justify-between px-3 py-1.5 text-xs border-t border-slate-50">
-                <span className="text-slate-500">GST (18%)</span>
-                <span className="text-slate-800" style={{ fontWeight: 600 }}>₹{q.gst.toLocaleString()}</span>
-              </div>
-              <div className="flex justify-between px-3 py-2 text-sm bg-slate-50 border-t border-slate-100">
-                <span className="text-slate-700" style={{ fontWeight: 600 }}>Total Amount</span>
-                <span className="text-indigo-700" style={{ fontWeight: 700 }}>₹{q.total.toLocaleString()}</span>
               </div>
             </div>
+
+            {/* Product Specifications */}
+            <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+              <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-2 bg-slate-50/50">
+                <Package size={16} className="text-slate-500" />
+                <h3 className="text-sm font-semibold text-slate-900">Quotation Products & Specs</h3>
+              </div>
+              <div className="divide-y divide-slate-100">
+                {q.products.map((item, i) => (
+                  <div key={i} className="p-5">
+                    <div className="flex justify-between items-start mb-4">
+                      <div>
+                        <p className="text-sm font-bold text-slate-900">{item.desc}</p>
+                        <p className="text-xs text-slate-500 mt-0.5">{item.qty.toLocaleString()} units @ ₹{item.rate.toFixed(2)}</p>
+                      </div>
+                      <p className="text-sm font-bold text-slate-900">₹{item.total.toLocaleString()}</p>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-50 p-3 rounded-lg border border-slate-100 text-xs">
+                      <div><span className="text-slate-400 block mb-0.5">Material</span><span className="font-medium text-slate-700">{item.specs.material}</span></div>
+                      <div><span className="text-slate-400 block mb-0.5">GSM</span><span className="font-medium text-slate-700">{item.specs.gsm}</span></div>
+                      <div><span className="text-slate-400 block mb-0.5">Dimensions</span><span className="font-medium text-slate-700">{item.specs.dimensions}</span></div>
+                      <div><span className="text-slate-400 block mb-0.5">Printing</span><span className="font-medium text-slate-700">{item.specs.printingTech}</span></div>
+                      <div><span className="text-slate-400 block mb-0.5">Colors</span><span className="font-medium text-slate-700">{item.specs.colors}</span></div>
+                      <div><span className="text-slate-400 block mb-0.5">Lamination</span><span className="font-medium text-slate-700">{item.specs.lamination}</span></div>
+                      <div className="col-span-2"><span className="text-slate-400 block mb-0.5">Packaging</span><span className="font-medium text-slate-700">{item.specs.packaging}</span></div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
           </div>
 
-          <div className="flex gap-2 flex-wrap">
-            {q.status === "Draft" && (
-              <button className="flex items-center gap-1.5 px-3 py-2 text-xs rounded-lg text-white" style={{ background: "#4f46e5", fontWeight: 500 }}>
-                <Send size={12} /> Send to Customer
-              </button>
-            )}
-            {q.status === "Sent" && (
-              <>
-                <button className="flex items-center gap-1.5 px-3 py-2 text-xs rounded-lg text-white bg-green-600 hover:bg-green-700" style={{ fontWeight: 500 }}>
-                  <CheckCircle size={12} /> Mark Approved
-                </button>
-                <button className="flex items-center gap-1.5 px-3 py-2 text-xs rounded-lg text-white bg-red-500 hover:bg-red-600" style={{ fontWeight: 500 }}>
-                  <XCircle size={12} /> Mark Rejected
-                </button>
-              </>
-            )}
-            {q.status === "Approved" && (
-              <button className="flex items-center gap-1.5 px-3 py-2 text-xs rounded-lg text-white bg-green-600" style={{ fontWeight: 500 }}>
-                <Plus size={12} /> Create Job Order
-              </button>
-            )}
-            <button className="flex items-center gap-1.5 px-3 py-2 text-xs rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50" style={{ fontWeight: 500 }}>
-              <Download size={12} /> Download PDF
-            </button>
-            <button className="flex items-center gap-1.5 px-3 py-2 text-xs rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50" style={{ fontWeight: 500 }}>
-              <Printer size={12} /> Print
-            </button>
+          {/* Sidebar Column */}
+          <div className="space-y-6">
+            
+            {/* Commercial Readiness Block */}
+            <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+              <div className="bg-slate-900 px-5 py-4 text-white">
+                <p className="text-xs text-slate-400 mb-1">Quotation Total (Inc. GST)</p>
+                <h3 className="text-2xl font-bold">₹{q.commercials.total.toLocaleString()}</h3>
+              </div>
+              <div className="p-5 space-y-4 text-sm">
+                <div className="flex justify-between items-center pb-3 border-b border-slate-100">
+                  <span className="text-slate-500">Payment Terms</span>
+                  <span className="font-semibold text-slate-800 text-right">{q.commercials.paymentTerms}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500">Advance Required ({q.commercials.advanceRequiredPct}%)</span>
+                  <span className="font-semibold text-slate-800">₹{requiredAdvance.toLocaleString()}</span>
+                </div>
+                
+                <div className={`mt-4 p-3 rounded-lg flex items-start gap-2 ${cleared ? 'bg-green-50 border border-green-200' : 'bg-amber-50 border border-amber-200'}`}>
+                  {cleared ? <CheckCircle size={16} className="text-green-600 mt-0.5" /> : <AlertCircle size={16} className="text-amber-600 mt-0.5" />}
+                  <div>
+                    <p className={`font-semibold ${cleared ? 'text-green-800' : 'text-amber-800'}`}>
+                      {cleared ? "Commercially Cleared" : "Advance Pending"}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Internal Costing Summary */}
+            <div className="bg-amber-50/50 border border-amber-200 rounded-xl shadow-sm overflow-hidden relative">
+              <div className="absolute top-0 left-0 w-1 h-full bg-amber-400" />
+              <div className="px-5 py-3 border-b border-amber-100 flex items-center gap-2">
+                <DollarSign size={16} className="text-amber-600" />
+                <h3 className="text-sm font-semibold text-amber-900">Internal Costing Summary</h3>
+              </div>
+              <div className="p-5 space-y-3 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-amber-700/80">Est. Total Cost</span>
+                  <span className="font-bold text-amber-900">₹{q.costing.estimatedTotalCost.toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-amber-700/80">Expected Margin</span>
+                  <span className="font-bold text-amber-900">₹{q.costing.expectedMargin.toLocaleString()}</span>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
     </div>
   );
 }
-
 export function QuotationManagement() {
-  const [selected, setSelected] = useState<typeof quotations[0] | null>(null);
+  const navigate = useNavigate();
+  const [quotations, setQuotations] = useState<QuotationData[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState<QuotationData | null>(null);
   const [statusFilter, setStatusFilter] = useState("All");
 
+  const fetchQuotations = async () => {
+    setLoading(true);
+    try {
+      const data = await api.getQuotations();
+      setQuotations(data);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchQuotations();
+  }, []);
+
   const filtered = quotations.filter((q) => statusFilter === "All" || q.status === statusFilter);
+  
+  // Advanced ERP Stats
   const stats = {
     total: quotations.length,
     approved: quotations.filter((q) => q.status === "Approved").length,
-    sent: quotations.filter((q) => q.status === "Sent").length,
-    totalValue: quotations.reduce((a, q) => a + q.total, 0),
+    convertedToSample: quotations.filter((q) => q.workflow.sampleOrder !== "N/A").length,
+    convertedToProduction: quotations.filter((q) => q.workflow.productionOrder !== "N/A").length,
+    totalValue: quotations.reduce((a, q) => a + q.commercials.total, 0),
   };
 
+  const conversionRate = stats.total > 0 ? Math.round(((stats.convertedToSample + stats.convertedToProduction) / stats.total) * 100) : 0;
+
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-6 space-y-6 max-w-[1600px] mx-auto">
       {selected && <QuotationDetail quotation={selected} onClose={() => setSelected(null)} />}
 
-      <div className="flex items-center justify-between flex-wrap gap-3">
+      <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
-          <h1 className="text-slate-900" style={{ fontSize: "1.25rem", fontWeight: 700 }}>Quotation Management</h1>
-          <p className="text-slate-500 text-sm mt-0.5">Create, manage, and track customer quotations</p>
+          <h1 className="text-slate-900" style={{ fontSize: "1.5rem", fontWeight: 700 }}>Quotation & Estimation</h1>
+          <p className="text-slate-500 text-sm mt-1">Manage print estimations, client approvals, and downstream production pipelines.</p>
         </div>
-        <button className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg text-white transition-colors" style={{ background: "#4f46e5", fontWeight: 500 }}>
-          <Plus size={14} /> Create Quotation
-        </button>
+        <div className="flex items-center gap-3">
+          <button 
+            onClick={() => navigate("/quotations/create")} 
+            className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg text-white transition-colors shadow-sm" 
+            style={{ background: "#4f46e5", fontWeight: 600 }}
+          >
+            <Plus size={16} /> Create Quotation
+          </button>
+        </div>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {[
-          { label: "Total Quotations", value: stats.total, icon: <FileText size={16} />, color: "text-indigo-600 bg-indigo-50" },
-          { label: "Approved", value: stats.approved, icon: <CheckCircle size={16} />, color: "text-green-600 bg-green-50" },
-          { label: "Awaiting Response", value: stats.sent, icon: <Clock size={16} />, color: "text-amber-600 bg-amber-50" },
-          { label: "Total Value", value: `₹${(stats.totalValue / 100000).toFixed(1)}L`, icon: <FileText size={16} />, color: "text-purple-600 bg-purple-50" },
-        ].map((s) => (
-          <div key={s.label} className="bg-card border border-border rounded-xl p-4">
-            <div className={`w-8 h-8 rounded-lg flex items-center justify-center mb-3 ${s.color}`}>{s.icon}</div>
-            <p className="text-slate-900 mb-0.5" style={{ fontSize: "1.25rem", fontWeight: 700 }}>{s.value}</p>
-            <p className="text-slate-600 text-xs" style={{ fontWeight: 500 }}>{s.label}</p>
-          </div>
-        ))}
+      {/* Pipeline Summary Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+        <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
+          <div className="w-8 h-8 rounded-lg flex items-center justify-center mb-3 text-indigo-600 bg-indigo-50"><FileText size={16} /></div>
+          <p className="text-slate-900 text-2xl font-bold mb-0.5">{stats.total}</p>
+          <p className="text-slate-500 text-xs font-medium uppercase tracking-wider">Total Quotes</p>
+        </div>
+        <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
+          <div className="w-8 h-8 rounded-lg flex items-center justify-center mb-3 text-blue-600 bg-blue-50"><DollarSign size={16} /></div>
+          <p className="text-slate-900 text-2xl font-bold mb-0.5">₹{(stats.totalValue / 100000).toFixed(1)}L</p>
+          <p className="text-slate-500 text-xs font-medium uppercase tracking-wider">Pipeline Value</p>
+        </div>
+        <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
+          <div className="w-8 h-8 rounded-lg flex items-center justify-center mb-3 text-amber-600 bg-amber-50"><Layers size={16} /></div>
+          <p className="text-slate-900 text-2xl font-bold mb-0.5">{stats.convertedToSample}</p>
+          <p className="text-slate-500 text-xs font-medium uppercase tracking-wider">Samples Created</p>
+        </div>
+        <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
+          <div className="w-8 h-8 rounded-lg flex items-center justify-center mb-3 text-emerald-600 bg-emerald-50"><Package size={16} /></div>
+          <p className="text-slate-900 text-2xl font-bold mb-0.5">{stats.convertedToProduction}</p>
+          <p className="text-slate-500 text-xs font-medium uppercase tracking-wider">Production Jobs</p>
+        </div>
+        <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
+          <div className="w-8 h-8 rounded-lg flex items-center justify-center mb-3 text-purple-600 bg-purple-50"><Activity size={16} /></div>
+          <p className="text-slate-900 text-2xl font-bold mb-0.5">{conversionRate}%</p>
+          <p className="text-slate-500 text-xs font-medium uppercase tracking-wider">Conversion Rate</p>
+        </div>
       </div>
 
-      {/* Quotation List */}
-      <div className="bg-card border border-border rounded-xl overflow-hidden">
-        <div className="flex items-center gap-3 p-5 border-b border-border flex-wrap">
-          <h3 className="text-slate-900 text-sm" style={{ fontWeight: 600 }}>All Quotations</h3>
-          <div className="flex-1" />
-          <div className="flex border border-slate-200 rounded-lg overflow-hidden">
-            {["All", "Approved", "Sent", "Draft", "Rejected"].map((f) => (
-              <button
-                key={f}
-                onClick={() => setStatusFilter(f)}
-                className={`px-3 py-1.5 text-xs transition-colors ${statusFilter === f ? "bg-indigo-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}
-                style={{ fontWeight: statusFilter === f ? 500 : 400 }}
-              >
-                {f}
-              </button>
-            ))}
+      {/* Global Filters & Quotation List */}
+      <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden flex flex-col">
+        {/* Filters Bar */}
+        <div className="flex items-center gap-4 p-4 border-b border-slate-100 bg-slate-50/50 flex-wrap">
+          <div className="relative">
+            <select 
+              value={statusFilter} 
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="appearance-none pl-3 pr-8 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-700 outline-none focus:border-indigo-500"
+            >
+              <option value="All">All Statuses</option>
+              <option value="Draft">Draft</option>
+              <option value="Pending">Pending Review</option>
+              <option value="Sent">Sent to Customer</option>
+              <option value="Approved">Approved</option>
+              <option value="Rejected">Rejected</option>
+            </select>
+            <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
           </div>
         </div>
 
-        <div className="divide-y divide-slate-50">
-          {filtered.map((q) => (
-            <div key={q.id} className="flex items-center gap-4 px-5 py-4 hover:bg-slate-50/50 transition-colors cursor-pointer" onClick={() => setSelected(q)}>
-              <div className="w-9 h-9 rounded-lg bg-indigo-50 flex items-center justify-center flex-shrink-0">
-                <FileText size={16} className="text-indigo-600" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <p className="text-slate-900 text-sm" style={{ fontWeight: 600 }}>{q.id}</p>
-                  <StatusBadge status={q.status} />
+        {/* Table Header */}
+        <div className="grid grid-cols-12 gap-4 px-6 py-3 bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+          <div className="col-span-3">Quotation & Customer</div>
+          <div className="col-span-2">Status</div>
+          <div className="col-span-2">Value & Advance</div>
+          <div className="col-span-2">Validity & Owner</div>
+          <div className="col-span-3 text-right">Downstream Workflow</div>
+        </div>
+
+        {/* Table Body */}
+        {loading ? (
+          <div className="p-8 text-center text-slate-500 text-sm">Loading quotations...</div>
+        ) : filtered.length === 0 ? (
+          <div className="p-8 text-center text-slate-500 text-sm">No quotations found.</div>
+        ) : (
+          <div className="divide-y divide-slate-100 bg-white">
+            {filtered.map((q) => {
+              const locked = isLocked(q);
+              const cleared = isCommerciallyCleared(q);
+              return (
+                <div key={q.id} className="grid grid-cols-12 gap-4 px-6 py-4 items-center hover:bg-slate-50/80 transition-colors cursor-pointer group" onClick={() => setSelected(q)}>
+                  
+                  {/* ID & Customer */}
+                  <div className="col-span-3 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="text-slate-900 font-bold text-sm">{q.id}</p>
+                      <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded font-mono">{q.version}</span>
+                      {locked && <Lock size={12} className="text-amber-500" />}
+                    </div>
+                    <p className="text-slate-500 text-xs truncate mt-0.5">{q.customer}</p>
+                  </div>
+
+                  {/* Status */}
+                  <div className="col-span-2">
+                    <StatusBadge status={q.status} />
+                  </div>
+
+                  {/* Value & Advance */}
+                  <div className="col-span-2">
+                    <p className="text-slate-900 font-bold text-sm">₹{q.commercials.total.toLocaleString()}</p>
+                    <div className="flex items-center gap-1 mt-0.5">
+                      <div className={`w-1.5 h-1.5 rounded-full ${cleared ? 'bg-green-500' : 'bg-amber-500'}`} />
+                      <p className="text-[10px] text-slate-500">{cleared ? 'Advance Cleared' : 'Advance Pending'}</p>
+                    </div>
+                  </div>
+
+                  {/* Validity & Owner */}
+                  <div className="col-span-2">
+                    <p className={`text-xs font-medium ${q.status === 'Expired' ? 'text-red-600' : 'text-slate-700'}`}>Exp: {q.validUntil}</p>
+                    <p className="text-[10px] text-slate-500 mt-0.5 flex items-center gap-1"><User size={10} /> {q.owner}</p>
+                  </div>
+
+                  {/* Downstream */}
+                  <div className="col-span-3 flex justify-end">
+                    {q.workflow.productionOrder !== "N/A" ? (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-100">
+                        <Package size={12} /> Prod: {q.workflow.productionOrder}
+                      </span>
+                    ) : q.workflow.sampleOrder !== "N/A" ? (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-indigo-50 text-indigo-700 border border-indigo-100">
+                        <Layers size={12} /> Sample: {q.workflow.sampleOrder}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-slate-400 font-medium">Not Converted</span>
+                    )}
+                    <ChevronDown size={16} className="text-slate-300 ml-4 -rotate-90 opacity-0 group-hover:opacity-100 transition-opacity" />
+                  </div>
+
                 </div>
-                <p className="text-slate-500 text-xs mt-0.5">{q.customer} · {q.items.length} items · Valid until {q.validUntil}</p>
-              </div>
-              <div className="text-right flex-shrink-0">
-                <p className="text-slate-900 text-sm" style={{ fontWeight: 700 }}>₹{q.total.toLocaleString()}</p>
-                <p className="text-slate-400 text-xs mt-0.5">{q.date}</p>
-              </div>
-            </div>
-          ))}
-        </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );

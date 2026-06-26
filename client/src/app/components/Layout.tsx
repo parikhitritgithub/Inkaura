@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard, ShoppingCart, Users, FileText, Briefcase,
   ClipboardList, Package, Cpu, CheckSquare, Truck, DollarSign,
@@ -13,6 +14,7 @@ export type Screen =
   | "sales"
   | "customers"
   | "quotations"
+  | "create-quotation"
   | "sample-jobs"      // Replaces "jobs" and "sample"
   | "production-jobs"  // Replaces both
   | "supervisor"
@@ -89,8 +91,6 @@ const navGroups: { label: string; items: NavItem[] }[] = [
 ];
 
 interface LayoutProps {
-  currentScreen: Screen;
-  onNavigate: (screen: Screen) => void;
   onLogout: () => void;
   children: React.ReactNode;
 }
@@ -102,6 +102,7 @@ const screenTitles: Record<Screen, string> = {
   sales: "Sales Dashboard",
   customers: "Customer Management",
   quotations: "Quotation Management",
+  "create-quotation": "Create Quotation",
   "sample-jobs": "Sample Jobs",
   "production-jobs": "Production Jobs",
   supervisor: "Supervisor Dashboard",
@@ -115,10 +116,16 @@ const screenTitles: Record<Screen, string> = {
   finance: "Finance & Reports",
 };
 
-export function Layout({ currentScreen, onNavigate, onLogout, children }: LayoutProps) {
+export function Layout({ onLogout, children }: LayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [notifOpen, setNotifOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  // Map pathname back to a Screen key for the active state
+  let currentScreenKey = location.pathname.split('/')[1] as Screen;
+  if (!currentScreenKey) currentScreenKey = "admin";
 
   const notifications = [
     { id: 1, text: "Sample SJ-0001 awaiting customer approval", time: "2m ago", type: "info" },
@@ -162,11 +169,11 @@ export function Layout({ currentScreen, onNavigate, onLogout, children }: Layout
               )}
               <div className="space-y-0.5">
                 {group.items.map((item) => {
-                  const active = currentScreen === item.id;
+                  const active = currentScreenKey === item.id;
                   return (
                     <button
                       key={item.id}
-                      onClick={() => onNavigate(item.id)}
+                      onClick={() => navigate(`/${item.id}`)}
                       className="w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg transition-all duration-150 text-left relative"
                       style={{
                         background: active ? "#6366f1" : "transparent",
@@ -233,7 +240,7 @@ export function Layout({ currentScreen, onNavigate, onLogout, children }: Layout
           <div className="flex items-center gap-1.5 text-xs min-w-0">
             <span className="text-slate-400 flex-shrink-0">PrintFlow</span>
             <ChevronRight size={12} className="text-slate-300 flex-shrink-0" />
-            <span className="text-slate-800 truncate" style={{ fontWeight: 600 }}>{screenTitles[currentScreen]}</span>
+            <span className="text-slate-800 truncate" style={{ fontWeight: 600 }}>{screenTitles[currentScreenKey] || "Dashboard"}</span>
           </div>
 
           <div className="flex-1" />

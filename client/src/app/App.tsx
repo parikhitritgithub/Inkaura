@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Routes, Route, Navigate } from "react-router-dom";
 import { LoginPage } from "./components/LoginPage";
 import { Layout, Screen } from "./components/Layout";
 import { AdminDashboard } from "./components/AdminDashboard";
@@ -18,30 +19,10 @@ import { ProductionDashboard } from "./components/ProductionDashboard";
 import { PackagingDashboard } from "./components/PackagingDashboard";
 import { ReportsAnalytics } from "./components/ReportsAnalytics";
 import { EmployeeManagement } from "./components/EmployeeManagement";
-
-const screenComponents: Record<Screen, React.ReactNode> = {
-  admin: <AdminDashboard />,
-  employees: <EmployeeManagement />,
-  reports: <ReportsAnalytics />,
-  sales: <SalesDashboard />,
-  customers: <CustomerManagement />,
-  quotations: <QuotationManagement />,
-  "sample-jobs": <SampleJobs />,
-  "production-jobs": <ProductionJobs />,
-  supervisor: <SupervisorDashboard />,
-  production: <ProductionDashboard />,
-  machines: <MachineManagement />,
-  operator: <MachineOperator />,
-  qc: <QualityControl />,
-  packaging: <PackagingDashboard />,
-  inventory: <InventoryManagement />,
-  dispatch: <DispatchDashboard />,
-  finance: <FinanceDashboard />,
-};
+import { CreateQuotationPage } from "./components/CreateQuotationPage";
 
 export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(() => !!localStorage.getItem("user"));
-  const [currentScreen, setCurrentScreen] = useState<Screen>("admin");
   const [darkMode, setDarkMode] = useState(false);
 
   return (
@@ -53,15 +34,33 @@ export default function App() {
         />
       ) : (
         <Layout
-          currentScreen={currentScreen}
-          onNavigate={setCurrentScreen}
-          onLogout={() => {
-            localStorage.removeItem("user");
-            setIsLoggedIn(false);
-          }}
-        >
-          {screenComponents[currentScreen]}
-        </Layout>
+            onLogout={() => {
+              localStorage.removeItem("user");
+              setIsLoggedIn(false);
+            }}
+          >
+            <Routes>
+              <Route path="/" element={<Navigate to="/admin" replace />} />
+              <Route path="/admin" element={<AdminDashboard />} />
+              <Route path="/employees" element={<EmployeeManagement />} />
+              <Route path="/reports" element={<ReportsAnalytics />} />
+              <Route path="/sales" element={<SalesDashboard />} />
+              <Route path="/customers" element={<CustomerManagement />} />
+              <Route path="/quotations" element={<QuotationManagement />} />
+              <Route path="/quotations/create" element={<CreateQuotationPage />} />
+              <Route path="/sample-jobs" element={<SampleJobs />} />
+              <Route path="/production-jobs" element={<ProductionJobs />} />
+              <Route path="/supervisor" element={<SupervisorDashboard />} />
+              <Route path="/production" element={<ProductionDashboard />} />
+              <Route path="/machines" element={<MachineManagement />} />
+              <Route path="/operator" element={<MachineOperator />} />
+              <Route path="/qc" element={<QualityControl />} />
+              <Route path="/packaging" element={<PackagingDashboard />} />
+              <Route path="/inventory" element={<InventoryManagement />} />
+              <Route path="/dispatch" element={<DispatchDashboard />} />
+              <Route path="/finance" element={<FinanceDashboard />} />
+            </Routes>
+          </Layout>
       )}
     </div>
   );
