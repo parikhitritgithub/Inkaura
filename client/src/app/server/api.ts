@@ -835,7 +835,6 @@ export const api = {
         return mapToSampleJob(data);
     },
 
-    // ✅ NEW: Update sample job status
     updateSampleStatus: async (id: string, status: SampleStatus): Promise<SampleJob> => {
         const { data, error } = await supabase
             .from('sample_orders')
@@ -854,34 +853,6 @@ export const api = {
 
         if (error) {
             console.error('Error updating sample status:', error);
-            throw new Error(error.message);
-        }
-        return mapToSampleJob(data);
-    },
-
-    // ✅ NEW: Assign machine and operator to sample
-    assignSampleMachineOperator: async (sampleId: string, machineId: number, operatorId: number): Promise<SampleJob> => {
-        // Update sample job with machine and operator
-        // Note: You may need to add machine_id and operator_id columns to sample_orders table
-        const { data, error } = await supabase
-            .from('sample_orders')
-            .update({
-                status: 'In Progress',
-                // machine_id: machineId, // Add if column exists
-                // assigned_to: operatorId, // Add if you want to update assigned_to
-            })
-            .eq('sample_order_id', sampleId)
-            .select(`
-                *,
-                customers:customer_id(company_name),
-                employees:assigned_to(full_name),
-                quotation_products:product_id(product_name),
-                quotations:quotation_id(quotation_id, total_payment)
-            `)
-            .single();
-
-        if (error) {
-            console.error('Error assigning machine and operator:', error);
             throw new Error(error.message);
         }
         return mapToSampleJob(data);
@@ -951,18 +922,14 @@ export const api = {
 
                 if (prodError) throw new Error(prodError.message);
 
-                // Update sample order with production_job_id
-                try {
-                    await supabase
-                        .from('sample_orders')
-                        .update({
-                            production_job_id: poId,
-                            status: 'Production Created',
-                        })
-                        .eq('sample_order_id', data.sampleJobId);
-                } catch (updateError) {
-                    console.warn('Could not update sample with production_job_id:', updateError);
-                }
+                // Update sample order with production_job_id and status
+                await supabase
+                    .from('sample_orders')
+                    .update({
+                        production_job_id: poId,
+                        status: 'Production Created',
+                    })
+                    .eq('sample_order_id', data.sampleJobId);
 
                 return mapToProductionJob(result);
             } else {
@@ -1039,6 +1006,58 @@ export const api = {
 
         if (error) throw new Error(error.message);
         return mapToProductionJob(data);
+    },
+
+    // ─── DISPATCH ─────────────────────────────────────────────
+
+    dispatchProductionOrder: async (productionOrderId: string, employeeId: number): Promise<void> => {
+        try {
+            // First, get the production order to find associated sample
+            const { data: productionOrder, error: fetchError } = await supabase
+                .from('production_orders')
+                .select('sample_order_id, quotation_id')
+                .eq('production_order_id', productionOrderId)
+                .single();
+
+            if (fetchError) {
+                console.error('Error fetching production order:', fetchError);
+                throw fetchError;
+            }
+
+            // Insert dispatch record
+            const { error: dispatchError } = await supabase
+                .from('dispatches')
+                .insert({
+                    production_order_id: productionOrderId,
+                    dispatch_by: employeeId,
+                    total_quantity: 1,
+                    quantity_dispatched: 1,
+                    status: 'Delivered',
+                    notes: 'Direct Delivery',
+                    dispatch_date: new Date().toISOString(),
+                });
+
+            if (dispatchError) throw dispatchError;
+
+            // Update production order status to Dispatched
+            const { error: updateError } = await supabase
+                .from('production_orders')
+                .update({ status: 'Dispatched' })
+                .eq('production_order_id', productionOrderId);
+
+            if (updateError) throw updateError;
+
+            // If there's a sample order associated, update it to Production Created if not already
+            if (productionOrder?.sample_order_id) {
+                await supabase
+                    .from('sample_orders')
+                    .update({ status: 'Production Created' })
+                    .eq('sample_order_id', productionOrder.sample_order_id);
+            }
+        } catch (error) {
+            console.error('Error dispatching production order:', error);
+            throw error;
+        }
     },
 
     // ─── QUALITY CONTROL ──────────────────────────────────────
@@ -1131,7 +1150,6 @@ export const api = {
         }
     },
 
-    // ── STEP 1: QC Inspector submits ──────────────────────────
     createQualityCheck: async (payload: CreateQualityCheckRequest): Promise<QualityCheck> => {
         try {
             const employee = await api.getCurrentEmployee();
@@ -1194,7 +1212,6 @@ export const api = {
         }
     },
 
-    // ── STEP 2: Supervisor/Admin approves ────────────────────
     approveQualityCheck: async (qcId: number, notes?: string): Promise<void> => {
         try {
             const employee = await api.getCurrentEmployee();
@@ -1235,7 +1252,6 @@ export const api = {
         }
     },
 
-    // ── Supervisor/Admin rejects ──────────────────────────────
     rejectQualityCheck: async (
         qcId: number,
         defectDescription: string,

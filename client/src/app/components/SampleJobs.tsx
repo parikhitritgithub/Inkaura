@@ -130,6 +130,11 @@ export function SampleJobs() {
   }, []);
 
   const filtered = sampleJobs.filter((job) => {
+    // Hide "Production Created" from the main "All" view
+    if (statusFilter === "All" && job.status === "Production Created") {
+      return false;
+    }
+
     const matchesSearch = job.id.toLowerCase().includes(search.toLowerCase()) ||
       job.customer.toLowerCase().includes(search.toLowerCase()) ||
       job.product.toLowerCase().includes(search.toLowerCase()) ||
@@ -315,7 +320,6 @@ export function SampleJobs() {
             </div>
 
             <div className="space-y-4">
-              {/* Machine */}
               <div>
                 <label className="text-xs text-slate-500 block mb-1">Machine *</label>
                 <select
@@ -332,7 +336,6 @@ export function SampleJobs() {
                 </select>
               </div>
 
-              {/* Operator */}
               <div>
                 <label className="text-xs text-slate-500 block mb-1">Operator *</label>
                 <select
@@ -380,14 +383,14 @@ export function SampleJobs() {
         </div>
       )}
 
-      {/* Header - Removed New Sample Job button */}
+      {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-slate-900 text-xl font-bold">Sample Jobs</h1>
           <p className="text-slate-500 text-sm mt-0.5">
             {sampleJobs.filter(j => j.status === "Awaiting Approval").length} awaiting approval ·
             {sampleJobs.filter(j => j.status === "In Progress").length} in production ·
-            {sampleJobs.length} total
+            {sampleJobs.filter(j => j.status !== "Production Created").length} active
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -407,6 +410,8 @@ export function SampleJobs() {
           const label = key === "All" ? "All Samples" : key;
           const active = statusFilter === key;
           const conf = key !== "All" ? statusConfig[key as SampleStatus] : null;
+          // Only show Production Created filter if there are jobs with that status
+          if (key === "Production Created" && count === 0) return null;
           return (
             <button
               key={key}
@@ -519,7 +524,6 @@ export function SampleJobs() {
 
                 {/* Action Buttons */}
                 <div className="flex items-center gap-2 flex-wrap">
-                  {/* ✅ Pending: Show "Assign Machine" button */}
                   {isPending && (
                     <button
                       onClick={() => handleOpenAssign(job)}
@@ -529,7 +533,6 @@ export function SampleJobs() {
                     </button>
                   )}
 
-                  {/* ✅ In Progress: Show "Edit Assignment" button */}
                   {isInProgress && (
                     <button
                       onClick={() => handleOpenEdit(job)}
@@ -539,7 +542,6 @@ export function SampleJobs() {
                     </button>
                   )}
 
-                  {/* ✅ Awaiting Approval: Show Approve/Reject */}
                   {isAwaitingApproval ? (
                     <>
                       <button

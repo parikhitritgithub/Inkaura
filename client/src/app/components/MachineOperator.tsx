@@ -205,15 +205,12 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
     }
   };
 
-  // ✅ NEW: Handle Mark as Done - sends to supervisor
   const handleMarkDone = async () => {
     try {
       setUpdating(true);
       if (isSample) {
-        // Sample job: mark as "Awaiting Approval" for supervisor review
         await api.updateSampleStatus(job.id, "Awaiting Approval");
 
-        // Log completion
         await supabase
           .from('job_activity_logs')
           .insert([{
@@ -227,7 +224,6 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
 
         alert("✅ Sample job completed! Sent to supervisor for approval.");
       } else {
-        // Production job: mark as "Completed"
         await api.updateProductionStatus(job.id, "Completed");
         alert("✅ Production job marked as completed!");
       }
@@ -243,7 +239,6 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
   };
 
   const handleMarkComplete = async () => {
-    // This is the quick complete button (no modal)
     setShowDoneModal(true);
   };
 
@@ -304,7 +299,6 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
       {running && <div className="h-1 bg-indigo-600" />}
 
       <div className="p-5">
-        {/* Done Modal */}
         {showDoneModal && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-xl p-6 max-w-md w-full">
@@ -365,8 +359,7 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
             <div className="flex items-center gap-2 mb-0.5">
               {isSample ? (
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-amber-50 text-amber-700 border border-amber-200">
-                  <FlaskConical size={10} /> Sample
-                </span>
+                  <FlaskConical size={10} /> Sample                </span>
               ) : (
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-indigo-50 text-indigo-700 border border-indigo-200">
                   <Factory size={10} /> Production
@@ -590,7 +583,6 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
           </div>
         ) : (
           <div className="flex flex-wrap gap-2">
-            {/* Start/Pause Button */}
             {(job.status === "Pending" || job.status === "In Progress") && (
               <button
                 onClick={running ? () => setShowPauseModal(true) : handleStartWork}
@@ -608,7 +600,6 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
               </button>
             )}
 
-            {/* Material Button - Only when running */}
             {running && (
               <button
                 onClick={() => setShowMaterialModal(true)}
@@ -620,7 +611,6 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
               </button>
             )}
 
-            {/* Issue Button */}
             {job.status !== "Completed" && job.status !== "Dispatched" && job.status !== "Approved" && job.status !== "Production Created" && job.status !== "Awaiting Approval" && (
               <button
                 onClick={() => setShowIssue(true)}
@@ -632,7 +622,6 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
               </button>
             )}
 
-            {/* Done/Complete Button */}
             {job.status !== "Completed" && job.status !== "Dispatched" && job.status !== "Approved" && job.status !== "Production Created" && job.status !== "Awaiting Approval" && (
               <button
                 onClick={handleMarkComplete}
@@ -650,14 +639,12 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
               </button>
             )}
 
-            {/* Status message for sample awaiting approval */}
             {isSample && job.status === "Awaiting Approval" && (
               <div className="flex-1 text-center py-2 px-3 rounded-lg text-xs bg-yellow-50 text-yellow-700 border border-yellow-200">
                 ⏳ Sent to Supervisor
               </div>
             )}
 
-            {/* Status message for production completed */}
             {!isSample && job.status === "Completed" && (
               <div className="flex-1 text-center py-2 px-3 rounded-lg text-xs bg-green-50 text-green-700 border border-green-200">
                 ✅ Completed
@@ -737,6 +724,7 @@ export function MachineOperator() {
       const combined: AssignedJob[] = [];
 
       productionData.forEach(job => {
+        // Only show production jobs that are not completed or dispatched
         if (job.status !== "Completed" && job.status !== "Dispatched") {
           combined.push({
             id: job.id,
@@ -761,6 +749,8 @@ export function MachineOperator() {
       });
 
       sampleData.forEach(job => {
+        // Only show sample jobs that are NOT "Production Created"
+        // These are jobs that have already been converted to production
         if (job.status === "Pending" || job.status === "In Progress" || job.status === "Awaiting Approval") {
           combined.push({
             id: job.id,
