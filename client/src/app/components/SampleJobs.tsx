@@ -1,24 +1,61 @@
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   Search, Plus, Calendar, User, Clock, CheckCircle, X,
-  FileText, Eye, RefreshCw, AlertTriangle
+  FileText, Eye, RefreshCw, AlertTriangle, FlaskConical, Factory,
+  Wrench, Settings, Edit
 } from "lucide-react";
 import {
   api,
   SampleJob,
   SampleStatus,
-  CreateSampleJobRequest,
   Priority
 } from "../server/api";
 
-const statusConfig: Record<SampleStatus, { label: string; bg: string; text: string; border: string; icon: React.ReactNode }> = {
-  "Pending": { label: "Pending", bg: "bg-slate-50", text: "text-slate-600", border: "border-slate-200", icon: <Clock size={12} /> },
-  "In Progress": { label: "In Progress", bg: "bg-blue-50", text: "text-blue-700", border: "border-blue-200", icon: <Clock size={12} /> },
-  "Awaiting Approval": { label: "Awaiting Approval", bg: "bg-yellow-50", text: "text-yellow-700", border: "border-yellow-200", icon: <Clock size={12} /> },
-  "Approved": { label: "Approved", bg: "bg-green-50", text: "text-green-700", border: "border-green-200", icon: <CheckCircle size={12} /> },
-  "Rejected": { label: "Rejected", bg: "bg-red-50", text: "text-red-700", border: "border-red-200", icon: <X size={12} /> },
-  "Production Created": { label: "Production Created", bg: "bg-purple-50", text: "text-purple-700", border: "border-purple-200", icon: <CheckCircle size={12} /> },
+// Status configuration
+const statusConfig: Record<SampleStatus, { label: string; bg: string; text: string; border: string; icon: React.ReactElement }> = {
+  "Pending": {
+    label: "Pending",
+    bg: "bg-slate-50",
+    text: "text-slate-600",
+    border: "border-slate-200",
+    icon: React.createElement(Clock, { size: 12 })
+  },
+  "In Progress": {
+    label: "In Progress",
+    bg: "bg-blue-50",
+    text: "text-blue-700",
+    border: "border-blue-200",
+    icon: React.createElement(Clock, { size: 12 })
+  },
+  "Awaiting Approval": {
+    label: "Awaiting Approval",
+    bg: "bg-yellow-50",
+    text: "text-yellow-700",
+    border: "border-yellow-200",
+    icon: React.createElement(Clock, { size: 12 })
+  },
+  "Approved": {
+    label: "Approved",
+    bg: "bg-green-50",
+    text: "text-green-700",
+    border: "border-green-200",
+    icon: React.createElement(CheckCircle, { size: 12 })
+  },
+  "Rejected": {
+    label: "Rejected",
+    bg: "bg-red-50",
+    text: "text-red-700",
+    border: "border-red-200",
+    icon: React.createElement(X, { size: 12 })
+  },
+  "Production Created": {
+    label: "Production Created",
+    bg: "bg-purple-50",
+    text: "text-purple-700",
+    border: "border-purple-200",
+    icon: React.createElement(CheckCircle, { size: 12 })
+  },
 };
 
 export function SampleJobs() {
@@ -35,13 +72,21 @@ export function SampleJobs() {
   const [rejectionReason, setRejectionReason] = useState("");
   const [creating, setCreating] = useState(false);
   const [processingId, setProcessingId] = useState<string | null>(null);
-  const [showCreateModal, setShowCreateModal] = useState(false);
 
-  // ✅ FIXED: State for dropdowns with string IDs
-  const [employees, setEmployees] = useState<{ id: string; name: string }[]>([]);
-  const [machines, setMachines] = useState<{ id: string; name: string }[]>([]);
-  const [customers, setCustomers] = useState<{ id: string; name: string }[]>([]);
-  const [products, setProducts] = useState<{ id: number; name: string }[]>([]);
+  // State for Assign/Edit Machine Modal
+  const [showAssignModal, setShowAssignModal] = useState(false);
+  const [assignSample, setAssignSample] = useState<SampleJob | null>(null);
+  const [assignForm, setAssignForm] = useState({
+    machineId: 0,
+    operatorId: 0,
+  });
+  const [isEditing, setIsEditing] = useState(false);
+
+  // State for dropdowns
+  const [employees, setEmployees] = useState<{ id: number; name: string; role: string }[]>([]);
+  const [machines, setMachines] = useState<{ id: number; name: string; type: string; status: string }[]>([]);
+  const [customers, setCustomers] = useState<{ id: string; name: string; email: string }[]>([]);
+  const [products, setProducts] = useState<{ id: number; name: string; price: number }[]>([]);
   const [loadingDropdowns, setLoadingDropdowns] = useState(false);
 
   // Load sample jobs
@@ -84,13 +129,6 @@ export function SampleJobs() {
     loadDropdownData();
   }, []);
 
-  // Handle navigation from Quotation
-  useEffect(() => {
-    if (location.state?.quotationId) {
-      setShowCreateModal(true);
-    }
-  }, [location.state]);
-
   const filtered = sampleJobs.filter((job) => {
     const matchesSearch = job.id.toLowerCase().includes(search.toLowerCase()) ||
       job.customer.toLowerCase().includes(search.toLowerCase()) ||
@@ -110,14 +148,73 @@ export function SampleJobs() {
     "Production Created": sampleJobs.filter(j => j.status === "Production Created").length,
   };
 
+  // Open Assign Modal for new assignment
+  const handleOpenAssign = (job: SampleJob) => {
+    setAssignSample(job);
+    setAssignForm({
+      machineId: 0,
+      operatorId: 0,
+    });
+    setIsEditing(false);
+    setShowAssignModal(true);
+  };
+
+  // Open Edit Modal for existing assignment
+  const handleOpenEdit = (job: SampleJob) => {
+    setAssignSample(job);
+    // You would fetch the current machine and operator from the job
+    // For now, we'll set default values
+    setAssignForm({
+      machineId: 0,
+      operatorId: 0,
+    });
+    setIsEditing(true);
+    setShowAssignModal(true);
+  };
+
+  // Handle Assign/Edit Machine and Operator
+  const handleAssign = async () => {
+    if (!assignSample) return;
+    if (assignForm.machineId === 0) {
+      alert("Please select a machine");
+      return;
+    }
+    if (assignForm.operatorId === 0) {
+      alert("Please select an operator");
+      return;
+    }
+
+    try {
+      setCreating(true);
+
+      // Update sample job status to "In Progress" or keep current status
+      await api.updateSampleStatus(assignSample.id, "In Progress");
+
+      // You could also update machine and operator if you have columns for them
+      // await api.assignSampleMachineOperator(assignSample.id, assignForm.machineId, assignForm.operatorId);
+
+      await loadSampleJobs();
+      setShowAssignModal(false);
+      setAssignSample(null);
+      alert(isEditing ? "Assignment updated successfully!" : "Machine and Operator assigned successfully!");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to assign machine and operator');
+    } finally {
+      setCreating(false);
+    }
+  };
+
   // Approve sample
   const handleApprove = async (job: SampleJob) => {
     try {
       setProcessingId(job.id);
       await api.approveSample(job.id);
       await loadSampleJobs();
-      setSelectedSample(job);
-      setShowCreateProduction(true);
+      const updatedJob = sampleJobs.find(j => j.id === job.id);
+      if (updatedJob) {
+        setSelectedSample(updatedJob);
+        setShowCreateProduction(true);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to approve sample');
     } finally {
@@ -143,7 +240,7 @@ export function SampleJobs() {
     }
   };
 
-  // Create production job
+  // Create production job from sample
   const handleCreateProduction = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedSample) return;
@@ -151,8 +248,8 @@ export function SampleJobs() {
     const formData = new FormData(e.target as HTMLFormElement);
     const quantity = parseInt(formData.get('quantity') as string);
     const deliveryDate = formData.get('deliveryDate') as string;
-    const machineId = formData.get('machineId') as string; // ✅ FIXED: string
-    const operatorId = formData.get('operatorId') as string; // ✅ FIXED: string
+    const machineId = parseInt(formData.get('machineId') as string);
+    const operatorId = parseInt(formData.get('operatorId') as string);
     const priority = formData.get('priority') as Priority;
 
     try {
@@ -176,31 +273,6 @@ export function SampleJobs() {
     }
   };
 
-  // Create sample job with dropdown values
-  const handleCreateSample = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const formData = new FormData(e.target as HTMLFormElement);
-
-    try {
-      setCreating(true);
-      await api.createSampleJob({
-        quotationId: formData.get('quotationId') as string,
-        customerId: formData.get('customerId') as string, // ✅ FIXED: string
-        productId: parseInt(formData.get('productId') as string),
-        sampleQuantity: parseInt(formData.get('sampleQuantity') as string),
-        sampleCost: parseInt(formData.get('sampleCost') as string),
-        assignedTo: formData.get('assignedTo') as string, // ✅ FIXED: string
-        dueDate: formData.get('dueDate') as string,
-      });
-      await loadSampleJobs();
-      setShowCreateModal(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create sample job');
-    } finally {
-      setCreating(false);
-    }
-  };
-
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -214,6 +286,94 @@ export function SampleJobs() {
 
   return (
     <div className="p-6 space-y-6">
+      {/* Assign/Edit Machine/Operator Modal */}
+      {showAssignModal && assignSample && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-slate-900 flex items-center gap-2">
+                {isEditing ? (
+                  <Edit size={18} className="text-indigo-600" />
+                ) : (
+                  <Settings size={18} className="text-indigo-600" />
+                )}
+                {isEditing ? "Edit Assignment" : "Assign Machine & Operator"}
+              </h3>
+              <button onClick={() => setShowAssignModal(false)} className="text-slate-400 hover:text-slate-600">
+                <X size={20} />
+              </button>
+            </div>
+
+            <p className="text-sm text-slate-500 mb-4">
+              {isEditing ? "Update machine and operator for" : "Assign machine and operator for"} <span className="font-semibold text-slate-700">{assignSample.id}</span>
+            </p>
+
+            <div className="bg-slate-50 rounded-lg p-3 mb-4 space-y-1">
+              <p className="text-xs text-slate-500">Product</p>
+              <p className="text-sm font-medium text-slate-900">{assignSample.product}</p>
+              <p className="text-xs text-slate-500 mt-1">Customer</p>
+              <p className="text-sm font-medium text-slate-900">{assignSample.customer}</p>
+              <p className="text-xs text-slate-500 mt-1">Quantity</p>
+              <p className="text-sm font-medium text-slate-900">{assignSample.sampleQuantity} pieces</p>
+              <p className="text-xs text-slate-500 mt-1">Current Status</p>
+              <p className="text-sm font-medium text-slate-900">{assignSample.status}</p>
+            </div>
+
+            <div className="space-y-4">
+              {/* Machine */}
+              <div>
+                <label className="text-xs text-slate-500 block mb-1">Machine *</label>
+                <select
+                  value={assignForm.machineId}
+                  onChange={(e) => setAssignForm({ ...assignForm, machineId: parseInt(e.target.value) })}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
+                >
+                  <option value="0">Select Machine</option>
+                  {machines.map((machine) => (
+                    <option key={machine.id} value={machine.id}>
+                      {machine.name} {machine.type ? `(${machine.type})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Operator */}
+              <div>
+                <label className="text-xs text-slate-500 block mb-1">Operator *</label>
+                <select
+                  value={assignForm.operatorId}
+                  onChange={(e) => setAssignForm({ ...assignForm, operatorId: parseInt(e.target.value) })}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
+                >
+                  <option value="0">Select Operator</option>
+                  {employees.map((employee) => (
+                    <option key={employee.id} value={employee.id}>
+                      {employee.name} {employee.role ? `(${employee.role})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="flex gap-2 pt-4 mt-4 border-t border-slate-100">
+              <button
+                onClick={handleAssign}
+                disabled={creating}
+                className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {creating ? 'Saving...' : isEditing ? 'Update Assignment' : 'Assign Machine & Operator'}
+              </button>
+              <button
+                onClick={() => setShowAssignModal(false)}
+                className="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 transition-colors text-sm font-medium"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Error toast */}
       {error && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-center gap-2">
@@ -225,7 +385,7 @@ export function SampleJobs() {
         </div>
       )}
 
-      {/* Header */}
+      {/* Header - Removed New Sample Job button */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-slate-900 text-xl font-bold">Sample Jobs</h1>
@@ -243,12 +403,6 @@ export function SampleJobs() {
           >
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Refresh
           </button>
-          <button
-            onClick={() => setShowCreateModal(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg text-white transition-colors bg-indigo-600 hover:bg-indigo-700 font-medium"
-          >
-            <Plus size={14} /> New Sample Job
-          </button>
         </div>
       </div>
 
@@ -263,8 +417,8 @@ export function SampleJobs() {
               key={key}
               onClick={() => setStatusFilter(key as any)}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border transition-all ${active
-                  ? "bg-indigo-600 text-white border-indigo-600"
-                  : "bg-white text-slate-600 border-slate-200 hover:border-slate-300"
+                ? "bg-indigo-600 text-white border-indigo-600"
+                : "bg-white text-slate-600 border-slate-200 hover:border-slate-300"
                 }`}
               style={{ fontWeight: active ? 600 : 400 }}
             >
@@ -304,7 +458,13 @@ export function SampleJobs() {
             const conf = statusConfig[job.status];
             const isAwaitingApproval = job.status === "Awaiting Approval";
             const isProductionCreated = job.status === "Production Created";
+            const isApproved = job.status === "Approved";
+            const isRejected = job.status === "Rejected";
+            const isPending = job.status === "Pending";
+            const isInProgress = job.status === "In Progress";
             const isProcessing = processingId === job.id;
+            // Check if job has been assigned (has machine and operator)
+            const isAssigned = isInProgress || job.status === "In Progress";
 
             return (
               <div key={job.id} className="bg-white border border-slate-200 rounded-xl p-5 hover:shadow-md transition-all">
@@ -356,7 +516,7 @@ export function SampleJobs() {
                   </div>
                 </div>
 
-                {job.status === "Rejected" && job.rejectionReason && (
+                {isRejected && job.rejectionReason && (
                   <div className="bg-red-50 border border-red-200 rounded-lg p-2 mb-3">
                     <p className="text-xs text-red-600">
                       <span className="font-semibold">Rejection Reason:</span> {job.rejectionReason}
@@ -364,7 +524,29 @@ export function SampleJobs() {
                   </div>
                 )}
 
-                <div className="flex items-center gap-2">
+                {/* Action Buttons */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  {/* Pending: Show Assign button */}
+                  {isPending && (
+                    <button
+                      onClick={() => handleOpenAssign(job)}
+                      className="flex-1 flex items-center justify-center gap-1 px-3 py-2 text-xs bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 transition-colors font-medium"
+                    >
+                      <Wrench size={14} /> Assign Machine
+                    </button>
+                  )}
+
+                  {/* In Progress: Show Edit Assignment button */}
+                  {isInProgress && (
+                    <button
+                      onClick={() => handleOpenEdit(job)}
+                      className="flex-1 flex items-center justify-center gap-1 px-3 py-2 text-xs bg-amber-500 text-white rounded-lg hover:bg-amber-600 transition-colors font-medium"
+                    >
+                      <Edit size={14} /> Edit Assignment
+                    </button>
+                  )}
+
+                  {/* Awaiting Approval: Show Approve/Reject */}
                   {isAwaitingApproval ? (
                     <>
                       <button
@@ -395,9 +577,9 @@ export function SampleJobs() {
                       onClick={() => navigate('/production-jobs')}
                       className="w-full flex items-center justify-center gap-1 px-3 py-2 text-xs bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition-colors font-medium"
                     >
-                      <Eye size={14} /> View Production
+                      <Factory size={14} /> View Production
                     </button>
-                  ) : job.status === "Approved" ? (
+                  ) : isApproved ? (
                     <button
                       onClick={() => {
                         setSelectedSample(job);
@@ -407,12 +589,22 @@ export function SampleJobs() {
                     >
                       <Plus size={14} /> Create Production Job
                     </button>
-                  ) : job.status === "Rejected" ? (
-                    <button className="w-full flex items-center justify-center gap-1 px-3 py-2 text-xs bg-slate-100 text-slate-600 rounded-lg cursor-not-allowed font-medium">
+                  ) : isRejected ? (
+                    <button
+                      onClick={() => {
+                        setSelectedSample(job);
+                      }}
+                      className="w-full flex items-center justify-center gap-1 px-3 py-2 text-xs bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 transition-colors font-medium"
+                    >
                       <Eye size={14} /> View Details
                     </button>
                   ) : (
-                    <button className="w-full flex items-center justify-center gap-1 px-3 py-2 text-xs bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 transition-colors font-medium">
+                    <button
+                      onClick={() => {
+                        setSelectedSample(job);
+                      }}
+                      className="w-full flex items-center justify-center gap-1 px-3 py-2 text-xs bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 transition-colors font-medium"
+                    >
                       <Eye size={14} /> View Details
                     </button>
                   )}
@@ -423,183 +615,14 @@ export function SampleJobs() {
         </div>
       )}
 
-      {/* Create Sample Modal */}
-      {showCreateModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-slate-900">Create Sample Job</h3>
-              <button onClick={() => setShowCreateModal(false)} className="text-slate-400 hover:text-slate-600">
-                <X size={20} />
-              </button>
-            </div>
-
-            <form onSubmit={handleCreateSample} className="space-y-3">
-              <div>
-                <label className="text-xs text-slate-500 block mb-1">Quotation ID *</label>
-                <input
-                  type="text"
-                  name="quotationId"
-                  placeholder="QT-XXXX"
-                  required
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
-                />
-              </div>
-
-              {/* ✅ FIXED: Customer Dropdown with string IDs */}
-              <div>
-                <label className="text-xs text-slate-500 block mb-1">Customer *</label>
-                <select
-                  name="customerId"
-                  required
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
-                >
-                  <option value="">Select Customer</option>
-                  {customers.map((customer) => (
-                    <option key={customer.id} value={customer.id}>
-                      {customer.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Product Dropdown */}
-              <div>
-                <label className="text-xs text-slate-500 block mb-1">Product *</label>
-                <select
-                  name="productId"
-                  required
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
-                >
-                  <option value="">Select Product</option>
-                  {products.map((product) => (
-                    <option key={product.id} value={product.id}>
-                      {product.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs text-slate-500 block mb-1">Sample Quantity *</label>
-                  <input
-                    type="number"
-                    name="sampleQuantity"
-                    placeholder="Qty"
-                    required
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs text-slate-500 block mb-1">Sample Cost *</label>
-                  <input
-                    type="number"
-                    name="sampleCost"
-                    placeholder="₹"
-                    required
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
-                  />
-                </div>
-              </div>
-
-              {/* ✅ FIXED: Employee Dropdown with string IDs */}
-              <div>
-                <label className="text-xs text-slate-500 block mb-1">Assigned To (Employee) *</label>
-                <select
-                  name="assignedTo"
-                  required
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
-                >
-                  <option value="">Select Employee</option>
-                  {employees.map((employee) => (
-                    <option key={employee.id} value={employee.id}>
-                      {employee.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="text-xs text-slate-500 block mb-1">Due Date *</label>
-                <input
-                  type="date"
-                  name="dueDate"
-                  required
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
-                />
-              </div>
-
-              <div className="flex gap-2 pt-2">
-                <button
-                  type="submit"
-                  disabled={creating || loadingDropdowns}
-                  className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {creating ? 'Creating...' : 'Create Sample Job'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowCreateModal(false)}
-                  className="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 transition-colors text-sm font-medium"
-                >
-                  Cancel
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Reject Modal */}
-      {showRejectModal && selectedSample && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4">
-            <h3 className="text-lg font-semibold text-slate-900 mb-2">Reject Sample</h3>
-            <p className="text-sm text-slate-500 mb-4">
-              Reject sample <span className="font-semibold text-slate-700">{selectedSample.id}</span>
-            </p>
-
-            <div className="mb-4">
-              <label className="text-xs text-slate-500 block mb-1">Rejection Reason *</label>
-              <textarea
-                value={rejectionReason}
-                onChange={(e) => setRejectionReason(e.target.value)}
-                placeholder="Enter reason for rejection..."
-                rows={3}
-                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
-              />
-            </div>
-
-            <div className="flex gap-2">
-              <button
-                onClick={handleReject}
-                disabled={!rejectionReason.trim() || creating}
-                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {creating ? 'Rejecting...' : 'Reject Sample'}
-              </button>
-              <button
-                onClick={() => {
-                  setShowRejectModal(false);
-                  setRejectionReason("");
-                  setSelectedSample(null);
-                }}
-                className="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 transition-colors text-sm font-medium"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Create Production Modal */}
       {showCreateProduction && selectedSample && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-slate-900">Create Production Job</h3>
+              <h3 className="text-lg font-semibold text-slate-900 flex items-center gap-2">
+                <Factory size={18} className="text-indigo-600" /> Create Production Job
+              </h3>
               <button onClick={() => setShowCreateProduction(false)} className="text-slate-400 hover:text-slate-600">
                 <X size={20} />
               </button>
@@ -639,7 +662,6 @@ export function SampleJobs() {
                 />
               </div>
 
-              {/* ✅ FIXED: Machine Dropdown with string IDs */}
               <div>
                 <label className="text-xs text-slate-500 block mb-1">Machine *</label>
                 <select
@@ -650,13 +672,12 @@ export function SampleJobs() {
                   <option value="">Select Machine</option>
                   {machines.map((machine) => (
                     <option key={machine.id} value={machine.id}>
-                      {machine.name}
+                      {machine.name} {machine.type ? `(${machine.type})` : ''}
                     </option>
                   ))}
                 </select>
               </div>
 
-              {/* ✅ FIXED: Operator Dropdown with string IDs */}
               <div>
                 <label className="text-xs text-slate-500 block mb-1">Operator *</label>
                 <select
@@ -667,7 +688,7 @@ export function SampleJobs() {
                   <option value="">Select Operator</option>
                   {employees.map((employee) => (
                     <option key={employee.id} value={employee.id}>
-                      {employee.name}
+                      {employee.name} {employee.role ? `(${employee.role})` : ''}
                     </option>
                   ))}
                 </select>
@@ -704,6 +725,51 @@ export function SampleJobs() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Reject Modal */}
+      {showRejectModal && selectedSample && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4">
+            <h3 className="text-lg font-semibold text-slate-900 flex items-center gap-2">
+              <X size={18} className="text-red-500" /> Reject Sample
+            </h3>
+            <p className="text-sm text-slate-500 mb-4">
+              Reject sample <span className="font-semibold text-slate-700">{selectedSample.id}</span>
+            </p>
+
+            <div className="mb-4">
+              <label className="text-xs text-slate-500 block mb-1">Rejection Reason *</label>
+              <textarea
+                value={rejectionReason}
+                onChange={(e) => setRejectionReason(e.target.value)}
+                placeholder="Enter reason for rejection..."
+                rows={3}
+                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
+              />
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                onClick={handleReject}
+                disabled={!rejectionReason.trim() || creating}
+                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {creating ? 'Rejecting...' : 'Reject Sample'}
+              </button>
+              <button
+                onClick={() => {
+                  setShowRejectModal(false);
+                  setRejectionReason("");
+                  setSelectedSample(null);
+                }}
+                className="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 transition-colors text-sm font-medium"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         </div>
       )}

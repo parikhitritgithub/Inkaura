@@ -38,11 +38,9 @@ const isCommerciallyCleared = (q: QuotationData) => {
 // Helper to check if sample is required from quotation metadata
 const isSampleRequired = (q: QuotationData): boolean => {
   try {
-    // Check if there's a sample order already
     if (q.workflow.sampleOrder !== "N/A") {
       return true;
     }
-    // Parse notes to get metadata
     if (q.activities && q.activities.length > 0) {
       const note = q.activities[0]?.note || '';
       const metaMatch = note.match(/---JSON_META_DATA---\n({.*})/s);
@@ -117,17 +115,32 @@ function QuotationDetail({ quotation: q, onClose, onUpdate }: QuotationDetailPro
     }
   };
 
-  // Handle Create Sample Job
+  // ✅ FIXED: Handle Create Sample Job with proper customer ID
   const handleCreateSampleJob = async () => {
     try {
       setCreating(true);
+
+      // Get the first employee as default assignedTo
+      const employeesList = await api.getEmployees();
+      const defaultEmployee = employeesList.length > 0 ? employeesList[0].id : 1;
+
+      // ✅ Use q.customerId from the quotation data
+      if (!q.customerId) {
+        alert('No customer associated with this quotation. Please select a customer.');
+        setCreating(false);
+        return;
+      }
+
+      // Get product ID from first product
+      const productId = q.products && q.products.length > 0 ? q.products[0].id : 1;
+
       await api.createSampleJob({
         quotationId: q.id,
-        customerId: q.id,
-        productId: q.products[0]?.id || 1,
+        customerId: q.customerId, // ✅ Now using the actual customer ID
+        productId: productId,
         sampleQuantity: 5,
         sampleCost: q.commercials.total * 0.05,
-        assignedTo: q.owner,
+        assignedTo: String(defaultEmployee),
         dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
       });
       alert("Sample job created successfully!");
@@ -173,7 +186,6 @@ function QuotationDetail({ quotation: q, onClose, onUpdate }: QuotationDetailPro
   };
 
   // Determine what buttons to show
-  const showApproveForProduction = q.status === "Approved" && q.workflow.productionOrder === "N/A";
   const hasSampleOrder = q.workflow.sampleOrder !== "N/A";
   const sampleOrderApproved = q.workflow.sampleOrder === "Approved" || q.workflow.sampleOrder === "Production Created";
 

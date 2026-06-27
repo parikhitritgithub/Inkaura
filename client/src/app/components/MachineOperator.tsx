@@ -1,11 +1,31 @@
 import { useState, useEffect } from "react";
-import { Play, Pause, AlertTriangle, CheckCircle, Clock, ChevronDown, X, Cpu, RefreshCw } from "lucide-react";
-import { api, ProductionJob, ProductionStatus } from "../server/api";
+import { Play, Pause, AlertTriangle, CheckCircle, Clock, ChevronDown, X, Cpu, RefreshCw, FlaskConical, Factory } from "lucide-react";
+import { api, ProductionJob, ProductionStatus, SampleJob, SampleStatus } from "../server/api";
 
 const issueTypes = ["Registration problem", "Color inconsistency", "Paper jam", "Ink drying issue", "Machine vibration", "Other"];
 
+// Combined Job interface
+interface AssignedJob {
+  id: string;
+  type: 'sample' | 'production';
+  product: string;
+  customer: string;
+  quantity: number;
+  assignedTo: string;
+  machine: string;
+  priority: 'High' | 'Medium' | 'Low';
+  status: string;
+  progress: number;
+  dueDate: string;
+  createdDate: string;
+  value: number;
+  sampleJobId?: string;
+  productionJobId?: string;
+  quotationId?: string;
+}
+
 interface JobCardProps {
-  job: ProductionJob;
+  job: AssignedJob;
   onStatusUpdate: () => void;
 }
 
@@ -16,30 +36,40 @@ function JobCard({ job, onStatusUpdate }: JobCardProps) {
   const [issueType, setIssueType] = useState("");
   const [updating, setUpdating] = useState(false);
   const progress = job.quantity > 0 ? Math.round((job.progress || 0)) : 0;
+  const isSample = job.type === 'sample';
 
-  const handleStartProduction = async () => {
+  const handleStartWork = async () => {
     try {
       setUpdating(true);
-      await api.updateProductionStatus(job.id, "In Progress");
+      if (isSample) {
+        // Update sample job status
+        await api.updateProductionStatus(job.id, "In Progress");
+      } else {
+        await api.updateProductionStatus(job.id, "In Progress");
+      }
       setRunning(true);
       onStatusUpdate();
     } catch (err) {
-      console.error("Failed to start production:", err);
-      alert("Failed to start production. Please try again.");
+      console.error("Failed to start work:", err);
+      alert("Failed to start. Please try again.");
     } finally {
       setUpdating(false);
     }
   };
 
-  const handlePauseProduction = async () => {
+  const handlePauseWork = async () => {
     try {
       setUpdating(true);
-      await api.updateProductionStatus(job.id, "Pending");
+      if (isSample) {
+        await api.updateProductionStatus(job.id, "Pending");
+      } else {
+        await api.updateProductionStatus(job.id, "Pending");
+      }
       setRunning(false);
       onStatusUpdate();
     } catch (err) {
-      console.error("Failed to pause production:", err);
-      alert("Failed to pause production. Please try again.");
+      console.error("Failed to pause:", err);
+      alert("Failed to pause. Please try again.");
     } finally {
       setUpdating(false);
     }
@@ -48,9 +78,16 @@ function JobCard({ job, onStatusUpdate }: JobCardProps) {
   const handleMarkComplete = async () => {
     try {
       setUpdating(true);
-      await api.updateProductionStatus(job.id, "Completed");
+      if (isSample) {
+        // For sample jobs, mark as "Awaiting Approval" (goes to supervisor)
+        await api.updateProductionStatus(job.id, "Awaiting Approval");
+        alert("Sample job completed! Sent to supervisor for approval.");
+      } else {
+        // For production jobs, mark as "Completed"
+        await api.updateProductionStatus(job.id, "Completed");
+        alert("Production job marked as completed!");
+      }
       onStatusUpdate();
-      alert("Job marked as completed!");
     } catch (err) {
       console.error("Failed to mark complete:", err);
       alert("Failed to mark job as complete. Please try again.");
@@ -71,15 +108,13 @@ function JobCard({ job, onStatusUpdate }: JobCardProps) {
 
     try {
       setUpdating(true);
-      // Log the issue (you can save to a database table if needed)
       console.log("Issue reported:", {
         jobId: job.id,
+        jobType: job.type,
         issueType,
         issueDesc,
         timestamp: new Date().toISOString(),
       });
-
-      // Optionally update job status or add note
       alert("Issue reported successfully! Maintenance has been notified.");
       setShowIssue(false);
       setIssueType("");
@@ -95,8 +130,11 @@ function JobCard({ job, onStatusUpdate }: JobCardProps) {
   const getStatusColor = () => {
     if (running) return "bg-indigo-50 text-indigo-700 border-indigo-200";
     if (job.status === "Pending") return "bg-slate-100 text-slate-600 border-slate-200";
+    if (job.status === "Awaiting Approval") return "bg-yellow-50 text-yellow-700 border-yellow-200";
     if (job.status === "QC Pending") return "bg-amber-50 text-amber-700 border-amber-200";
     if (job.status === "Completed") return "bg-green-50 text-green-700 border-green-200";
+    if (job.status === "Approved") return "bg-green-50 text-green-700 border-green-200";
+    if (job.status === "Production Created") return "bg-purple-50 text-purple-700 border-purple-200";
     return "bg-slate-100 text-slate-600 border-slate-200";
   };
 
@@ -108,10 +146,20 @@ function JobCard({ job, onStatusUpdate }: JobCardProps) {
         <div className="flex items-start justify-between gap-3 mb-4">
           <div>
             <div className="flex items-center gap-2 mb-0.5">
+              {/* Job Type Badge */}
+              {isSample ? (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-amber-50 text-amber-700 border border-amber-200">
+                  <FlaskConical size={10} /> Sample
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-indigo-50 text-indigo-700 border border-indigo-200">
+                  <Factory size={10} /> Production
+                </span>
+              )}
               <p className="text-indigo-600 text-xs" style={{ fontWeight: 600 }}>{job.id}</p>
               <span className={`inline-flex px-2 py-0.5 rounded border text-xs ${job.priority === "High" ? "bg-red-50 text-red-700 border-red-200" :
-                  job.priority === "Medium" ? "bg-amber-50 text-amber-700 border-amber-200" :
-                    "bg-slate-50 text-slate-600 border-slate-200"
+                job.priority === "Medium" ? "bg-amber-50 text-amber-700 border-amber-200" :
+                  "bg-slate-50 text-slate-600 border-slate-200"
                 }`} style={{ fontWeight: 500 }}>{job.priority} Priority</span>
             </div>
             <h3 className="text-slate-900 text-sm" style={{ fontWeight: 700 }}>{job.product}</h3>
@@ -125,7 +173,7 @@ function JobCard({ job, onStatusUpdate }: JobCardProps) {
         {/* Progress */}
         <div className="mb-4">
           <div className="flex items-center justify-between mb-1.5">
-            <span className="text-xs text-slate-500">Production Progress</span>
+            <span className="text-xs text-slate-500">Progress</span>
             <span className="text-xs text-slate-800" style={{ fontWeight: 700 }}>{job.quantity.toLocaleString()} units ({progress}%)</span>
           </div>
           <div className="h-2.5 rounded-full bg-slate-100 overflow-hidden">
@@ -136,7 +184,7 @@ function JobCard({ job, onStatusUpdate }: JobCardProps) {
           </div>
         </div>
 
-        {/* Specs - Derived from product info */}
+        {/* Details Grid */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
           <div className="bg-slate-50 rounded-lg p-2.5">
             <p className="text-slate-400 text-xs capitalize mb-0.5">Job ID</p>
@@ -205,9 +253,10 @@ function JobCard({ job, onStatusUpdate }: JobCardProps) {
           </div>
         ) : (
           <div className="flex gap-2">
-            {job.status === "Pending" || job.status === "In Progress" ? (
+            {/* Start/Pause Button */}
+            {(job.status === "Pending" || job.status === "In Progress") && (
               <button
-                onClick={running ? handlePauseProduction : handleStartProduction}
+                onClick={running ? handlePauseWork : handleStartWork}
                 disabled={updating}
                 className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-xs text-white transition-colors ${running ? "bg-amber-500 hover:bg-amber-600" : "bg-indigo-600 hover:bg-indigo-700"} disabled:opacity-50 disabled:cursor-not-allowed`}
                 style={{ fontWeight: 600 }}
@@ -215,14 +264,15 @@ function JobCard({ job, onStatusUpdate }: JobCardProps) {
                 {updating ? (
                   <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                 ) : running ? (
-                  <><Pause size={13} /> Pause Production</>
+                  <><Pause size={13} /> Pause</>
                 ) : (
-                  <><Play size={13} /> Start Production</>
+                  <><Play size={13} /> Start</>
                 )}
               </button>
-            ) : null}
+            )}
 
-            {job.status !== "Completed" && job.status !== "Dispatched" && (
+            {/* Issue Button */}
+            {job.status !== "Completed" && job.status !== "Dispatched" && job.status !== "Approved" && job.status !== "Production Created" && (
               <button
                 onClick={() => setShowIssue(true)}
                 disabled={updating}
@@ -233,7 +283,8 @@ function JobCard({ job, onStatusUpdate }: JobCardProps) {
               </button>
             )}
 
-            {progress === 100 && job.status !== "Completed" && (
+            {/* Complete Button - Different behavior for sample vs production */}
+            {progress === 100 && job.status !== "Completed" && job.status !== "Approved" && job.status !== "Production Created" && (
               <button
                 onClick={handleMarkComplete}
                 disabled={updating}
@@ -242,10 +293,19 @@ function JobCard({ job, onStatusUpdate }: JobCardProps) {
               >
                 {updating ? (
                   <div className="w-4 h-4 border-2 border-green-700 border-t-transparent rounded-full animate-spin" />
+                ) : isSample ? (
+                  <><CheckCircle size={13} /> Send to Supervisor</>
                 ) : (
                   <><CheckCircle size={13} /> Mark Complete</>
                 )}
               </button>
+            )}
+
+            {/* Status message for sample awaiting approval */}
+            {isSample && job.status === "Awaiting Approval" && (
+              <div className="flex-1 text-center py-2 px-3 rounded-lg text-xs bg-yellow-50 text-yellow-700 border border-yellow-200">
+                ⏳ Sent to Supervisor
+              </div>
             )}
           </div>
         )}
@@ -255,7 +315,7 @@ function JobCard({ job, onStatusUpdate }: JobCardProps) {
 }
 
 export function MachineOperator() {
-  const [productionJobs, setProductionJobs] = useState<ProductionJob[]>([]);
+  const [assignedJobs, setAssignedJobs] = useState<AssignedJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [operatorName, setOperatorName] = useState("Loading...");
@@ -266,19 +326,73 @@ export function MachineOperator() {
     try {
       setLoading(true);
       setError(null);
-      const data = await api.getProductionJobs();
 
-      // Filter jobs assigned to current operator
-      // For demo, we'll show all jobs, but in production you'd filter by operator
-      setProductionJobs(data);
+      // Fetch production jobs
+      const productionData = await api.getProductionJobs();
 
-      // Try to get operator info from the first job
-      if (data.length > 0 && data[0].assignedTo) {
-        setOperatorName(data[0].assignedTo);
-        setOperatorMachine(data[0].machine);
+      // Fetch sample jobs
+      const sampleData = await api.getSampleJobs();
+
+      // Combine and map to AssignedJob
+      const combined: AssignedJob[] = [];
+
+      // Add production jobs
+      productionData.forEach(job => {
+        // Only show jobs that are not completed/dispatched
+        if (job.status !== "Completed" && job.status !== "Dispatched") {
+          combined.push({
+            id: job.id,
+            type: 'production',
+            product: job.product,
+            customer: job.customer,
+            quantity: job.quantity,
+            assignedTo: job.assignedTo,
+            machine: job.machine,
+            priority: job.priority,
+            status: job.status,
+            progress: job.progress,
+            dueDate: job.dueDate,
+            createdDate: job.createdDate,
+            value: job.value,
+            productionJobId: job.id,
+            quotationId: job.quotationId,
+          });
+        }
+      });
+
+      // Add sample jobs
+      sampleData.forEach(job => {
+        // Only show pending, in progress, and awaiting approval jobs
+        if (job.status === "Pending" || job.status === "In Progress" || job.status === "Awaiting Approval") {
+          combined.push({
+            id: job.id,
+            type: 'sample',
+            product: job.product,
+            customer: job.customer,
+            quantity: job.sampleQuantity,
+            assignedTo: job.assignedTo,
+            machine: 'Sample', // Sample jobs don't have machine assigned yet
+            priority: 'Medium',
+            status: job.status,
+            progress: 0, // Sample jobs track completion differently
+            dueDate: job.dueDate,
+            createdDate: job.createdDate,
+            value: job.sampleCost,
+            sampleJobId: job.id,
+            quotationId: job.quotationId,
+          });
+        }
+      });
+
+      setAssignedJobs(combined);
+
+      // Set operator info
+      if (combined.length > 0 && combined[0].assignedTo) {
+        setOperatorName(combined[0].assignedTo);
+        setOperatorMachine(combined[0].machine || 'Sample');
       } else {
-        setOperatorName("Vijay Kumar");
-        setOperatorMachine("PM-3 (Offset 4C)");
+        setOperatorName("Admin User");
+        setOperatorMachine("ertger");
       }
     } catch (err) {
       console.error("Failed to load jobs:", err);
@@ -293,18 +407,23 @@ export function MachineOperator() {
   }, []);
 
   // Calculate stats
-  const totalJobs = productionJobs.length;
-  const runningJobs = productionJobs.filter(j => j.status === "In Progress").length;
-  const pendingJobs = productionJobs.filter(j => j.status === "Pending").length;
-  const completedJobs = productionJobs.filter(j => j.status === "Completed").length;
-  const totalUnits = productionJobs.reduce((sum, j) => sum + j.quantity, 0);
-  const completedUnits = productionJobs.reduce((sum, j) => sum + (j.quantity * (j.progress / 100)), 0);
-  const issuesReported = 0; // This would come from a separate table
+  const totalJobs = assignedJobs.length;
+  const runningJobs = assignedJobs.filter(j => j.status === "In Progress").length;
+  const pendingJobs = assignedJobs.filter(j => j.status === "Pending").length;
+  const awaitingApproval = assignedJobs.filter(j => j.status === "Awaiting Approval").length;
+  const totalUnits = assignedJobs.reduce((sum, j) => sum + j.quantity, 0);
+  const completedUnits = assignedJobs.reduce((sum, j) => sum + (j.quantity * (j.progress / 100)), 0);
 
-  // Calculate machine uptime (average progress)
-  const avgProgress = productionJobs.length > 0
-    ? Math.round(productionJobs.reduce((sum, j) => sum + j.progress, 0) / productionJobs.length)
+  // Calculate average progress
+  const avgProgress = assignedJobs.length > 0
+    ? Math.round(assignedJobs.reduce((sum, j) => sum + j.progress, 0) / assignedJobs.length)
     : 0;
+
+  const issuesReported = 0;
+
+  // Separate sample and production jobs for display
+  const sampleJobs = assignedJobs.filter(j => j.type === 'sample');
+  const productionJobs = assignedJobs.filter(j => j.type === 'production');
 
   if (loading) {
     return (
@@ -360,7 +479,7 @@ export function MachineOperator() {
           { label: "My Jobs Today", value: totalJobs, sub: `${runningJobs} running, ${pendingJobs} pending`, color: "text-indigo-600 bg-indigo-50" },
           { label: "Units Completed", value: Math.round(completedUnits).toLocaleString(), sub: `of ${totalUnits.toLocaleString()} total`, color: "text-green-600 bg-green-50" },
           { label: "Avg Progress", value: `${avgProgress}%`, sub: "Across all jobs", color: "text-purple-600 bg-purple-50" },
-          { label: "Issues Reported", value: issuesReported, sub: "All clear", color: "text-slate-500 bg-slate-50" },
+          { label: "Awaiting Approval", value: awaitingApproval, sub: "Sample jobs ready", color: "text-amber-600 bg-amber-50" },
         ].map((s) => (
           <div key={s.label} className="bg-card border border-border rounded-xl p-4">
             <div className={`w-8 h-8 rounded-lg flex items-center justify-center mb-3 ${s.color}`}>
@@ -373,28 +492,50 @@ export function MachineOperator() {
         ))}
       </div>
 
-      {/* Job Cards */}
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-slate-700 text-sm" style={{ fontWeight: 600 }}>Assigned Jobs</h2>
-          <span className="text-xs text-slate-400">{productionJobs.filter(j => j.status !== "Dispatched" && j.status !== "Completed" && j.progress < 100).length} active jobs</span>
-        </div>
-        {productionJobs.filter(j => j.status !== "Dispatched" && j.status !== "Completed" && j.progress < 100).length === 0 ? (
-          <div className="text-center py-12 bg-card border border-border rounded-xl">
-            <div className="text-slate-400 mb-2">
-              <Cpu size={48} className="mx-auto" />
-            </div>
-            <p className="text-slate-500 text-sm">No jobs assigned</p>
-            <p className="text-slate-400 text-xs mt-1">Check back later for new assignments</p>
+      {/* Sample Jobs Section */}
+      {sampleJobs.length > 0 && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-slate-700 text-sm flex items-center gap-2" style={{ fontWeight: 600 }}>
+              <FlaskConical size={16} className="text-amber-500" /> Sample Jobs
+            </h2>
+            <span className="text-xs text-slate-400">{sampleJobs.length} jobs</span>
           </div>
-        ) : (
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-            {productionJobs.filter(j => j.status !== "Dispatched" && j.status !== "Completed" && j.progress < 100).map((job) => (
+            {sampleJobs.map((job) => (
               <JobCard key={job.id} job={job} onStatusUpdate={loadJobs} />
             ))}
           </div>
-        )}
-      </div>
+        </div>
+      )}
+
+      {/* Production Jobs Section */}
+      {productionJobs.length > 0 && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-slate-700 text-sm flex items-center gap-2" style={{ fontWeight: 600 }}>
+              <Factory size={16} className="text-indigo-500" /> Production Jobs
+            </h2>
+            <span className="text-xs text-slate-400">{productionJobs.length} jobs</span>
+          </div>
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+            {productionJobs.map((job) => (
+              <JobCard key={job.id} job={job} onStatusUpdate={loadJobs} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* No Jobs Message */}
+      {sampleJobs.length === 0 && productionJobs.length === 0 && (
+        <div className="text-center py-12 bg-card border border-border rounded-xl">
+          <div className="text-slate-400 mb-2">
+            <Cpu size={48} className="mx-auto" />
+          </div>
+          <p className="text-slate-500 text-sm">No jobs assigned</p>
+          <p className="text-slate-400 text-xs mt-1">Check back later for new assignments</p>
+        </div>
+      )}
     </div>
   );
 }
