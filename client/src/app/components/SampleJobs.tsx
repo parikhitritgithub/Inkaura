@@ -162,8 +162,6 @@ export function SampleJobs() {
   // Open Edit Modal for existing assignment
   const handleOpenEdit = (job: SampleJob) => {
     setAssignSample(job);
-    // You would fetch the current machine and operator from the job
-    // For now, we'll set default values
     setAssignForm({
       machineId: 0,
       operatorId: 0,
@@ -187,11 +185,8 @@ export function SampleJobs() {
     try {
       setCreating(true);
 
-      // Update sample job status to "In Progress" or keep current status
+      // Update sample job status to "In Progress"
       await api.updateSampleStatus(assignSample.id, "In Progress");
-
-      // You could also update machine and operator if you have columns for them
-      // await api.assignSampleMachineOperator(assignSample.id, assignForm.machineId, assignForm.operatorId);
 
       await loadSampleJobs();
       setShowAssignModal(false);
@@ -463,8 +458,6 @@ export function SampleJobs() {
             const isPending = job.status === "Pending";
             const isInProgress = job.status === "In Progress";
             const isProcessing = processingId === job.id;
-            // Check if job has been assigned (has machine and operator)
-            const isAssigned = isInProgress || job.status === "In Progress";
 
             return (
               <div key={job.id} className="bg-white border border-slate-200 rounded-xl p-5 hover:shadow-md transition-all">
@@ -526,7 +519,7 @@ export function SampleJobs() {
 
                 {/* Action Buttons */}
                 <div className="flex items-center gap-2 flex-wrap">
-                  {/* Pending: Show Assign button */}
+                  {/* ✅ Pending: Show "Assign Machine" button */}
                   {isPending && (
                     <button
                       onClick={() => handleOpenAssign(job)}
@@ -536,7 +529,7 @@ export function SampleJobs() {
                     </button>
                   )}
 
-                  {/* In Progress: Show Edit Assignment button */}
+                  {/* ✅ In Progress: Show "Edit Assignment" button */}
                   {isInProgress && (
                     <button
                       onClick={() => handleOpenEdit(job)}
@@ -546,7 +539,7 @@ export function SampleJobs() {
                     </button>
                   )}
 
-                  {/* Awaiting Approval: Show Approve/Reject */}
+                  {/* ✅ Awaiting Approval: Show Approve/Reject */}
                   {isAwaitingApproval ? (
                     <>
                       <button

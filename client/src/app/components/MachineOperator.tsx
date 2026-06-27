@@ -6,7 +6,6 @@ import { supabase } from "../server/api";
 const issueTypes = ["Registration problem", "Color inconsistency", "Paper jam", "Ink drying issue", "Machine vibration", "Other"];
 const pauseReasons = ["Material shortage", "Machine maintenance", "Operator break", "Quality check", "Customer approval needed", "Other"];
 
-// Combined Job interface with material tracking
 interface AssignedJob {
   id: string;
   type: 'sample' | 'production';
@@ -31,15 +30,18 @@ interface AssignedJob {
 }
 
 interface InventoryItem {
-  id: string;
+  id: number;
   item: string;
   category: string;
   current: number;
   min: number;
   max: number;
   unit: string;
-  unitCost: number;
+  unitcost: number;
   supplier: string;
+  lastorder?: string;
+  created_at?: string;
+  updated_at?: string;
 }
 
 interface JobCardProps {
@@ -66,6 +68,8 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
   const [materialQuantity, setMaterialQuantity] = useState(0);
   const [wasteQuantity, setWasteQuantity] = useState(0);
   const [materialNote, setMaterialNote] = useState("");
+  const [showDoneModal, setShowDoneModal] = useState(false);
+  const [doneNote, setDoneNote] = useState("");
 
   const progress = job.quantity > 0 ? Math.round((job.progress || 0)) : 0;
   const isSample = job.type === 'sample';
@@ -109,7 +113,6 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
       setPauseReason("");
       setPauseNote("");
 
-      // Log pause reason to database
       await supabase
         .from('job_activity_logs')
         .insert([{
@@ -144,7 +147,7 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
     try {
       setUpdating(true);
 
-      const inventoryItem = inventoryItems.find(item => item.id === selectedInventoryItem);
+      const inventoryItem = inventoryItems.find(item => String(item.id) === selectedInventoryItem);
       if (!inventoryItem) {
         alert("Inventory item not found");
         return;
@@ -155,14 +158,12 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
         return;
       }
 
-      // Update inventory
       const newQuantity = inventoryItem.current - materialQuantity;
       await supabase
         .from('inventory')
         .update({ current: newQuantity })
         .eq('id', inventoryItem.id);
 
-      // Log material usage
       await supabase
         .from('material_usage_logs')
         .insert([{
@@ -175,7 +176,6 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
           timestamp: new Date().toISOString()
         }]);
 
-      // Update job with material info
       await supabase
         .from(job.type === 'sample' ? 'sample_orders' : 'production_orders')
         .update({
@@ -205,23 +205,46 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
     }
   };
 
-  const handleMarkComplete = async () => {
+  // ✅ NEW: Handle Mark as Done - sends to supervisor
+  const handleMarkDone = async () => {
     try {
       setUpdating(true);
       if (isSample) {
+        // Sample job: mark as "Awaiting Approval" for supervisor review
         await api.updateSampleStatus(job.id, "Awaiting Approval");
-        alert("Sample job completed! Sent to supervisor for approval.");
+
+        // Log completion
+        await supabase
+          .from('job_activity_logs')
+          .insert([{
+            job_id: job.id,
+            job_type: job.type,
+            activity_type: 'completed',
+            reason: 'Sample completed - sent for approval',
+            notes: doneNote || 'Sample work completed',
+            timestamp: new Date().toISOString()
+          }]);
+
+        alert("✅ Sample job completed! Sent to supervisor for approval.");
       } else {
+        // Production job: mark as "Completed"
         await api.updateProductionStatus(job.id, "Completed");
-        alert("Production job marked as completed!");
+        alert("✅ Production job marked as completed!");
       }
+      setShowDoneModal(false);
+      setDoneNote("");
       onStatusUpdate();
     } catch (err) {
-      console.error("Failed to mark complete:", err);
-      alert("Failed to mark job as complete. Please try again.");
+      console.error("Failed to mark as done:", err);
+      alert("Failed to mark job as done. Please try again.");
     } finally {
       setUpdating(false);
     }
+  };
+
+  const handleMarkComplete = async () => {
+    // This is the quick complete button (no modal)
+    setShowDoneModal(true);
   };
 
   const handleSubmitIssue = async () => {
@@ -270,11 +293,73 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
     return "bg-slate-100 text-slate-600 border-slate-200";
   };
 
+  const getStatusDisplay = () => {
+    if (running) return "Running";
+    if (job.status === "Awaiting Approval") return "⏳ Awaiting Approval";
+    return job.status;
+  };
+
   return (
     <div className={`bg-card border rounded-xl overflow-hidden ${running ? "border-indigo-200" : "border-slate-200"}`}>
       {running && <div className="h-1 bg-indigo-600" />}
 
       <div className="p-5">
+        {/* Done Modal */}
+        {showDoneModal && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-xl p-6 max-w-md w-full">
+              <h3 className="text-lg font-semibold text-slate-900 flex items-center gap-2 mb-2">
+                <CheckCircle size={20} className="text-green-500" />
+                Mark Job as Done
+              </h3>
+              <p className="text-sm text-slate-500 mb-4">
+                {isSample
+                  ? "Sample job will be sent to supervisor for approval."
+                  : "Production job will be marked as completed."
+                }
+              </p>
+              <div className="bg-slate-50 rounded-lg p-3 mb-4 space-y-1">
+                <p className="text-xs text-slate-500">Job</p>
+                <p className="text-sm font-medium text-slate-900">{job.id}</p>
+                <p className="text-xs text-slate-500 mt-1">Product</p>
+                <p className="text-sm font-medium text-slate-900">{job.product}</p>
+                <p className="text-xs text-slate-500 mt-1">Quantity</p>
+                <p className="text-sm font-medium text-slate-900">{job.quantity.toLocaleString()} units</p>
+              </div>
+              <div className="mb-4">
+                <label className="text-xs text-slate-500 block mb-1">Completion Notes (Optional)</label>
+                <textarea
+                  value={doneNote}
+                  onChange={(e) => setDoneNote(e.target.value)}
+                  placeholder="Add any completion notes..."
+                  rows={2}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
+                />
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleMarkDone}
+                  disabled={updating}
+                  className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {updating ? (
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <CheckCircle size={16} />
+                  )}
+                  {updating ? "Processing..." : "Confirm Done"}
+                </button>
+                <button
+                  onClick={() => { setShowDoneModal(false); setDoneNote(""); }}
+                  className="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 transition-colors text-sm font-medium"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="flex items-start justify-between gap-3 mb-4">
           <div>
             <div className="flex items-center gap-2 mb-0.5">
@@ -297,7 +382,7 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
             <p className="text-slate-500 text-xs mt-0.5">{job.customer} · {job.machine}</p>
           </div>
           <span className={`inline-flex px-2 py-0.5 rounded border text-xs flex-shrink-0 ${getStatusColor()}`} style={{ fontWeight: 500 }}>
-            {running ? "Running" : job.status}
+            {getStatusDisplay()}
           </span>
         </div>
 
@@ -413,7 +498,7 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
                 >
                   <option value="">Select material...</option>
                   {availableInventory.map((item) => (
-                    <option key={item.id} value={item.id}>
+                    <option key={item.id} value={String(item.id)}>
                       {item.item} ({item.current} {item.unit} available)
                     </option>
                   ))}
@@ -505,6 +590,7 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
           </div>
         ) : (
           <div className="flex flex-wrap gap-2">
+            {/* Start/Pause Button */}
             {(job.status === "Pending" || job.status === "In Progress") && (
               <button
                 onClick={running ? () => setShowPauseModal(true) : handleStartWork}
@@ -522,6 +608,7 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
               </button>
             )}
 
+            {/* Material Button - Only when running */}
             {running && (
               <button
                 onClick={() => setShowMaterialModal(true)}
@@ -533,7 +620,8 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
               </button>
             )}
 
-            {job.status !== "Completed" && job.status !== "Dispatched" && job.status !== "Approved" && job.status !== "Production Created" && (
+            {/* Issue Button */}
+            {job.status !== "Completed" && job.status !== "Dispatched" && job.status !== "Approved" && job.status !== "Production Created" && job.status !== "Awaiting Approval" && (
               <button
                 onClick={() => setShowIssue(true)}
                 disabled={updating}
@@ -544,7 +632,8 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
               </button>
             )}
 
-            {progress === 100 && job.status !== "Completed" && job.status !== "Approved" && job.status !== "Production Created" && (
+            {/* Done/Complete Button */}
+            {job.status !== "Completed" && job.status !== "Dispatched" && job.status !== "Approved" && job.status !== "Production Created" && job.status !== "Awaiting Approval" && (
               <button
                 onClick={handleMarkComplete}
                 disabled={updating}
@@ -554,16 +643,24 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
                 {updating ? (
                   <div className="w-4 h-4 border-2 border-green-700 border-t-transparent rounded-full animate-spin" />
                 ) : isSample ? (
-                  <><CheckCircle size={13} /> Send to Supervisor</>
+                  <><CheckCircle size={13} /> Done</>
                 ) : (
-                  <><CheckCircle size={13} /> Mark Complete</>
+                  <><CheckCircle size={13} /> Complete</>
                 )}
               </button>
             )}
 
+            {/* Status message for sample awaiting approval */}
             {isSample && job.status === "Awaiting Approval" && (
               <div className="flex-1 text-center py-2 px-3 rounded-lg text-xs bg-yellow-50 text-yellow-700 border border-yellow-200">
                 ⏳ Sent to Supervisor
+              </div>
+            )}
+
+            {/* Status message for production completed */}
+            {!isSample && job.status === "Completed" && (
+              <div className="flex-1 text-center py-2 px-3 rounded-lg text-xs bg-green-50 text-green-700 border border-green-200">
+                ✅ Completed
               </div>
             )}
           </div>
@@ -590,12 +687,34 @@ export function MachineOperator() {
         .select('*')
         .order('item');
 
-      if (error) throw error;
+      if (error) {
+        console.error("Inventory fetch error:", error);
+        if (error.code === 'PGRST204') {
+          setInventoryItems([]);
+          return;
+        }
+        throw error;
+      }
       if (data) {
-        setInventoryItems(data);
+        const mappedData: InventoryItem[] = data.map((item: any) => ({
+          id: item.id,
+          item: item.item,
+          category: item.category,
+          current: item.current,
+          min: item.min,
+          max: item.max,
+          unit: item.unit,
+          unitcost: item.unitcost,
+          supplier: item.supplier,
+          lastorder: item.lastorder,
+          created_at: item.created_at,
+          updated_at: item.updated_at,
+        }));
+        setInventoryItems(mappedData);
       }
     } catch (err) {
       console.error("Failed to load inventory:", err);
+      setInventoryItems([]);
     }
   };
 
@@ -607,7 +726,6 @@ export function MachineOperator() {
       const productionData = await api.getProductionJobs();
       const sampleData = await api.getSampleJobs();
 
-      // Get current employee
       const emp = await api.getCurrentEmployee();
       if (emp) {
         setCurrentEmployee(emp.full_name || "");

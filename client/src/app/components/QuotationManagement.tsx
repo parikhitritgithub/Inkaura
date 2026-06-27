@@ -3,7 +3,8 @@ import {
   Plus, FileText, CheckCircle, Clock, XCircle, Printer, Download, Send,
   X, AlertCircle, Calendar, User, DollarSign, Activity, ChevronDown,
   Package, Layers, ArrowRight, Lock, Copy, RefreshCcw, ThumbsUp,
-  Settings, Factory, Truck, FlaskConical, Check
+  Settings, Factory, Truck, FlaskConical, Check, RefreshCw,
+  Receipt, DollarSign as DollarIcon, Banknote, CreditCard, Wallet
 } from "lucide-react";
 import { api, QuotationData, Priority, SampleStatus } from "../server/api";
 import { useNavigate } from "react-router-dom";
@@ -18,6 +19,8 @@ function StatusBadge({ status }: { status: string }) {
     "Revision": "bg-purple-50 text-purple-700 border-purple-200",
     "Expired": "bg-slate-800 text-slate-100 border-slate-700",
     "Cancelled": "bg-slate-100 text-slate-400 border-slate-200",
+    "Refunded": "bg-orange-50 text-orange-700 border-orange-200",
+    "Partially Refunded": "bg-yellow-50 text-yellow-700 border-yellow-200",
   };
   return (
     <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs border ${s[status] ?? "bg-slate-100 text-slate-600 border-slate-200"}`} style={{ fontWeight: 500 }}>
@@ -55,6 +58,16 @@ const isSampleRequired = (q: QuotationData): boolean => {
   }
 };
 
+// Helper to get sample status
+const getSampleStatus = (q: QuotationData): string => {
+  return q.workflow.sampleOrder;
+};
+
+// Helper to get production status
+const getProductionStatus = (q: QuotationData): string => {
+  return q.workflow.productionOrder;
+};
+
 interface QuotationDetailProps {
   quotation: QuotationData;
   onClose: () => void;
@@ -67,6 +80,8 @@ function QuotationDetail({ quotation: q, onClose, onUpdate }: QuotationDetailPro
   const cleared = isCommerciallyCleared(q);
   const requiredAdvance = (q.commercials.total * q.commercials.advanceRequiredPct) / 100;
   const sampleRequired = isSampleRequired(q);
+  const sampleStatus = getSampleStatus(q);
+  const productionStatus = getProductionStatus(q);
 
   // State for workflow
   const [creating, setCreating] = useState(false);
@@ -81,6 +96,19 @@ function QuotationDetail({ quotation: q, onClose, onUpdate }: QuotationDetailPro
     priority: "Medium" as Priority,
     deliveryDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
   });
+
+  // State for Reject with Refund Modal
+  const [showRejectModal, setShowRejectModal] = useState(false);
+  const [rejectData, setRejectData] = useState({
+    reason: "",
+    refundAmount: 0,
+    refundMethod: "Bank Transfer",
+    refundNotes: "",
+    status: "Refunded",
+  });
+
+  // State for Refund Details
+  const [showRefundDetails, setShowRefundDetails] = useState(false);
 
   // Fetch dropdown data when modal opens
   useEffect(() => {
@@ -115,35 +143,94 @@ function QuotationDetail({ quotation: q, onClose, onUpdate }: QuotationDetailPro
     }
   };
 
-  // ✅ FIXED: Handle Create Sample Job with proper customer ID
+  // Handle Reject with Refund
+  const handleRejectWithRefund = async () => {
+    if (!rejectData.reason.trim()) {
+      alert("Please provide a rejection reason");
+      return;
+    }
+    if (rejectData.refundAmount < 0) {
+      alert("Refund amount cannot be negative");
+      return;
+    }
+    if (rejectData.refundAmount > q.commercials.total) {
+      alert(`Refund amount cannot exceed the total amount (₹${q.commercials.total.toLocaleString()})`);
+      return;
+    }
+
+    try {
+      setCreating(true);
+
+      // Calculate advance received (assume it's been paid)
+      const advanceReceived = q.commercials.total * (q.commercials.advanceRequiredPct / 100);
+      const refundAmount = rejectData.refundAmount || advanceReceived;
+
+      // Update quotation status
+      await api.updateQuotationStatus(q.id, "Rejected");
+
+      // Here you would update an invoice or create a refund record
+      // For now, we'll log the refund details
+      console.log("Refund Details:", {
+        quotationId: q.id,
+        customer: q.customer,
+        totalAmount: q.commercials.total,
+        advanceReceived: advanceReceived,
+        refundAmount: refundAmount,
+        refundMethod: rejectData.refundMethod,
+        refundNotes: rejectData.refundNotes,
+        reason: rejectData.reason,
+        status: rejectData.status,
+        timestamp: new Date().toISOString(),
+      });
+
+      // You could create a refund invoice here
+      // const refundInvoice = await createRefundInvoice(q, refundAmount);
+
+      alert(`✅ Quotation rejected and refund of ₹${refundAmount.toLocaleString()} processed successfully!`);
+      setShowRejectModal(false);
+      setRejectData({
+        reason: "",
+        refundAmount: 0,
+        refundMethod: "Bank Transfer",
+        refundNotes: "",
+        status: "Refunded",
+      });
+      onUpdate();
+      onClose();
+    } catch (err) {
+      console.error("Failed to reject with refund:", err);
+      alert("Failed to process rejection. Please try again.");
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  // Handle Create Sample Job
   const handleCreateSampleJob = async () => {
     try {
       setCreating(true);
 
-      // Get the first employee as default assignedTo
       const employeesList = await api.getEmployees();
       const defaultEmployee = employeesList.length > 0 ? employeesList[0].id : 1;
 
-      // ✅ Use q.customerId from the quotation data
       if (!q.customerId) {
         alert('No customer associated with this quotation. Please select a customer.');
         setCreating(false);
         return;
       }
 
-      // Get product ID from first product
       const productId = q.products && q.products.length > 0 ? q.products[0].id : 1;
 
       await api.createSampleJob({
         quotationId: q.id,
-        customerId: q.customerId, // ✅ Now using the actual customer ID
+        customerId: q.customerId,
         productId: productId,
         sampleQuantity: 5,
         sampleCost: q.commercials.total * 0.05,
         assignedTo: String(defaultEmployee),
         dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
       });
-      alert("Sample job created successfully!");
+      alert("✅ Sample job created successfully! Waiting for supervisor approval.");
       onUpdate();
       onClose();
     } catch (err) {
@@ -176,7 +263,7 @@ function QuotationDetail({ quotation: q, onClose, onUpdate }: QuotationDetailPro
       });
       onUpdate();
       setShowCreateProductionModal(false);
-      alert("Production job created successfully!");
+      alert("✅ Production job created successfully!");
     } catch (err) {
       console.error("Failed to create production job:", err);
       alert("Failed to create production job. Please try again.");
@@ -188,6 +275,21 @@ function QuotationDetail({ quotation: q, onClose, onUpdate }: QuotationDetailPro
   // Determine what buttons to show
   const hasSampleOrder = q.workflow.sampleOrder !== "N/A";
   const sampleOrderApproved = q.workflow.sampleOrder === "Approved" || q.workflow.sampleOrder === "Production Created";
+  const hasProduction = q.workflow.productionOrder !== "N/A";
+  const isRejected = q.status === "Rejected";
+
+  // Calculate advance amount for refund display
+  const advanceAmount = q.commercials.total * (q.commercials.advanceRequiredPct / 100);
+
+  // Open reject modal with pre-filled data
+  const openRejectModal = () => {
+    const advanceReceived = q.commercials.advanceReceivedAmt || advanceAmount;
+    setRejectData({
+      ...rejectData,
+      refundAmount: advanceReceived,
+    });
+    setShowRejectModal(true);
+  };
 
   return (
     <>
@@ -201,6 +303,7 @@ function QuotationDetail({ quotation: q, onClose, onUpdate }: QuotationDetailPro
                   <h2 className="text-slate-900 text-lg" style={{ fontWeight: 700 }}>{q.id}</h2>
                   <span className="text-xs bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded font-mono">{q.version}</span>
                   {locked && <Lock size={14} className="text-amber-500" title="Locked by downstream workflow" />}
+                  {isRejected && <StatusBadge status="Rejected" />}
                 </div>
                 <p className="text-slate-500 text-sm mt-0.5">{q.customer}</p>
               </div>
@@ -221,6 +324,163 @@ function QuotationDetail({ quotation: q, onClose, onUpdate }: QuotationDetailPro
               </button>
             </div>
           </div>
+
+          {/* Reject with Refund Modal */}
+          {showRejectModal && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[70] p-4">
+              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+                <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 sticky top-0 bg-white">
+                  <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                    <XCircle size={20} className="text-red-500" /> Reject Quotation & Process Refund
+                  </h3>
+                  <button onClick={() => setShowRejectModal(false)} className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 transition-colors">
+                    <X size={20} />
+                  </button>
+                </div>
+
+                <div className="p-6 space-y-5">
+                  {/* Quotation Info */}
+                  <div className="bg-slate-50 rounded-xl p-4 border border-slate-200">
+                    <p className="text-xs text-slate-500 mb-1">Quotation</p>
+                    <p className="font-semibold text-slate-900">{q.id}</p>
+                    <p className="text-sm text-slate-600">{q.customer}</p>
+                    <div className="grid grid-cols-3 gap-2 mt-2 pt-2 border-t border-slate-200">
+                      <div>
+                        <p className="text-[10px] text-slate-500">Total Amount</p>
+                        <p className="text-sm font-bold text-slate-900">₹{q.commercials.total.toLocaleString()}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] text-slate-500">Advance Paid</p>
+                        <p className="text-sm font-bold text-green-600">₹{advanceAmount.toLocaleString()}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] text-slate-500">Refund Due</p>
+                        <p className="text-sm font-bold text-orange-600">
+                          ₹{(rejectData.refundAmount || advanceAmount).toLocaleString()}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Rejection Form */}
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">
+                      Rejection Reason <span className="text-red-500">*</span>
+                    </label>
+                    <textarea
+                      value={rejectData.reason}
+                      onChange={(e) => setRejectData({ ...rejectData, reason: e.target.value })}
+                      placeholder="Why is this quotation being rejected?"
+                      rows={3}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">
+                        Refund Amount (₹)
+                      </label>
+                      <input
+                        type="number"
+                        value={rejectData.refundAmount}
+                        onChange={(e) => setRejectData({ ...rejectData, refundAmount: parseFloat(e.target.value) || 0 })}
+                        min="0"
+                        max={q.commercials.total}
+                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
+                      />
+                      <p className="text-xs text-slate-400 mt-1">Max: ₹{q.commercials.total.toLocaleString()}</p>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">
+                        Refund Method
+                      </label>
+                      <select
+                        value={rejectData.refundMethod}
+                        onChange={(e) => setRejectData({ ...rejectData, refundMethod: e.target.value })}
+                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
+                      >
+                        <option value="Bank Transfer">Bank Transfer</option>
+                        <option value="Credit Card">Credit Card</option>
+                        <option value="Cash">Cash</option>
+                        <option value="Cheque">Cheque</option>
+                        <option value="UPI">UPI</option>
+                        <option value="Wallet">Wallet</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">
+                      Refund Notes (Optional)
+                    </label>
+                    <textarea
+                      value={rejectData.refundNotes}
+                      onChange={(e) => setRejectData({ ...rejectData, refundNotes: e.target.value })}
+                      placeholder="Additional notes about the refund..."
+                      rows={2}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">
+                      Refund Status
+                    </label>
+                    <select
+                      value={rejectData.status}
+                      onChange={(e) => setRejectData({ ...rejectData, status: e.target.value })}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
+                    >
+                      <option value="Refunded">Full Refund</option>
+                      <option value="Partially Refunded">Partial Refund</option>
+                      <option value="Pending">Pending</option>
+                    </select>
+                  </div>
+
+                  {/* Refund Summary */}
+                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+                    <p className="text-xs font-semibold text-amber-800 mb-2">Refund Summary</p>
+                    <div className="grid grid-cols-2 gap-2 text-sm">
+                      <div>
+                        <p className="text-amber-700">Original Amount</p>
+                        <p className="font-bold text-amber-900">₹{q.commercials.total.toLocaleString()}</p>
+                      </div>
+                      <div>
+                        <p className="text-amber-700">Refund Amount</p>
+                        <p className="font-bold text-orange-600">₹{(rejectData.refundAmount || advanceAmount).toLocaleString()}</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="px-6 py-4 border-t border-slate-100 bg-slate-50 rounded-b-2xl flex justify-end gap-3">
+                  <button
+                    onClick={() => setShowRejectModal(false)}
+                    className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleRejectWithRefund}
+                    disabled={creating || !rejectData.reason.trim()}
+                    className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                  >
+                    {creating ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        Processing...
+                      </>
+                    ) : (
+                      <>
+                        <XCircle size={16} /> Reject & Process Refund
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="p-6 grid grid-cols-1 lg:grid-cols-3 gap-6 overflow-y-auto bg-slate-50/50">
 
@@ -243,13 +503,22 @@ function QuotationDetail({ quotation: q, onClose, onUpdate }: QuotationDetailPro
                   ].map((step, i) => (
                     <div key={i} className="relative z-10 flex flex-col items-center gap-2 bg-white px-2">
                       <div className={`w-8 h-8 rounded-full flex items-center justify-center border-2 text-xs font-bold
-                        ${step.status !== "N/A" && step.status !== "Pending" ? "bg-indigo-50 border-indigo-500 text-indigo-700" : "bg-white border-slate-200 text-slate-400"}
+                        ${step.status !== "N/A" && step.status !== "Pending" ?
+                          step.status === "Awaiting Approval" ? "bg-yellow-50 border-yellow-500 text-yellow-700" :
+                            step.status === "Rejected" ? "bg-red-50 border-red-500 text-red-700" :
+                              "bg-indigo-50 border-indigo-500 text-indigo-700" :
+                          "bg-white border-slate-200 text-slate-400"}
                       `}>
                         {i + 1}
                       </div>
                       <div className="text-center">
                         <p className="text-xs font-medium text-slate-700">{step.label}</p>
-                        <p className="text-[10px] text-slate-500">{step.status}</p>
+                        <p className={`text-[10px] ${step.status === "Awaiting Approval" ? "text-yellow-600" :
+                          step.status === "Rejected" ? "text-red-600" :
+                            step.status !== "N/A" ? "text-indigo-600" : "text-slate-400"
+                          }`}>
+                          {step.status}
+                        </p>
                       </div>
                     </div>
                   ))}
@@ -306,6 +575,12 @@ function QuotationDetail({ quotation: q, onClose, onUpdate }: QuotationDetailPro
                     <span className="text-slate-500">Advance Required ({q.commercials.advanceRequiredPct}%)</span>
                     <span className="font-semibold text-slate-800">₹{requiredAdvance.toLocaleString()}</span>
                   </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-500">Advance Received</span>
+                    <span className={`font-semibold ${cleared ? 'text-green-600' : 'text-amber-600'}`}>
+                      ₹{q.commercials.advanceReceivedAmt.toLocaleString()}
+                    </span>
+                  </div>
 
                   <div className={`mt-4 p-3 rounded-lg flex items-start gap-2 ${cleared ? 'bg-green-50 border border-green-200' : 'bg-amber-50 border border-amber-200'}`}>
                     {cleared ? <CheckCircle size={16} className="text-green-600 mt-0.5" /> : <AlertCircle size={16} className="text-amber-600 mt-0.5" />}
@@ -337,10 +612,33 @@ function QuotationDetail({ quotation: q, onClose, onUpdate }: QuotationDetailPro
                 </div>
               </div>
 
+              {/* Sample Status Message */}
+              {sampleStatus === "Awaiting Approval" && (
+                <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 text-center">
+                  <div className="flex items-center justify-center gap-2 mb-1">
+                    <Clock size={18} className="text-yellow-600" />
+                    <p className="text-yellow-800 text-sm font-semibold">Sample Pending Approval</p>
+                  </div>
+                  <p className="text-yellow-600 text-xs">The sample job has been sent to the supervisor for approval.</p>
+                  <p className="text-yellow-600 text-xs mt-1">Once approved, you can create the production job.</p>
+                </div>
+              )}
+
+              {/* Sample Approved Message */}
+              {sampleStatus === "Approved" && !hasProduction && (
+                <div className="bg-green-50 border border-green-200 rounded-xl p-4 text-center">
+                  <div className="flex items-center justify-center gap-2 mb-1">
+                    <CheckCircle size={18} className="text-green-600" />
+                    <p className="text-green-800 text-sm font-semibold">Sample Approved!</p>
+                  </div>
+                  <p className="text-green-600 text-xs">The sample has been approved by the supervisor.</p>
+                  <p className="text-green-600 text-xs mt-1">You can now create the production job.</p>
+                </div>
+              )}
+
               {/* Action Buttons - Only show after approval */}
               {q.status === "Approved" && q.workflow.productionOrder === "N/A" && (
                 <div className="space-y-3">
-                  {/* CASE 1: Sample Required AND No Sample Created Yet */}
                   {sampleRequired && !hasSampleOrder && (
                     <button
                       onClick={handleCreateSampleJob}
@@ -351,17 +649,15 @@ function QuotationDetail({ quotation: q, onClose, onUpdate }: QuotationDetailPro
                     </button>
                   )}
 
-                  {/* CASE 2: Sample Required AND Sample Created BUT Not Approved */}
                   {sampleRequired && hasSampleOrder && !sampleOrderApproved && (
-                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-center">
-                      <p className="text-amber-700 text-sm font-medium flex items-center justify-center gap-2">
+                    <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 text-center">
+                      <p className="text-yellow-700 text-sm font-medium flex items-center justify-center gap-2">
                         <Clock size={16} /> Sample job is pending approval
                       </p>
-                      <p className="text-amber-600 text-xs mt-1">Approve sample before creating production</p>
+                      <p className="text-yellow-600 text-xs mt-1">Waiting for supervisor to approve the sample</p>
                     </div>
                   )}
 
-                  {/* CASE 3: Sample Required AND Sample Approved */}
                   {sampleRequired && hasSampleOrder && sampleOrderApproved && (
                     <button
                       onClick={() => setShowCreateProductionModal(true)}
@@ -371,7 +667,6 @@ function QuotationDetail({ quotation: q, onClose, onUpdate }: QuotationDetailPro
                     </button>
                   )}
 
-                  {/* CASE 4: Sample NOT Required - Direct Production */}
                   {!sampleRequired && (
                     <button
                       onClick={() => setShowCreateProductionModal(true)}
@@ -381,7 +676,6 @@ function QuotationDetail({ quotation: q, onClose, onUpdate }: QuotationDetailPro
                     </button>
                   )}
 
-                  {/* Show sample requirement status */}
                   <div className="text-center">
                     <span className={`text-xs ${sampleRequired ? 'text-amber-600' : 'text-green-600'}`}>
                       {sampleRequired ? '📋 Sample required for this quotation' : '✅ No sample required'}
@@ -399,6 +693,18 @@ function QuotationDetail({ quotation: q, onClose, onUpdate }: QuotationDetailPro
                   <p className="text-green-600 text-xs mt-1">ID: {q.workflow.productionOrder}</p>
                 </div>
               )}
+
+              {/* If quotation is rejected - show refund info */}
+              {isRejected && (
+                <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-center">
+                  <div className="flex items-center justify-center gap-2 mb-1">
+                    <XCircle size={18} className="text-red-600" />
+                    <p className="text-red-800 text-sm font-semibold">Quotation Rejected</p>
+                  </div>
+                  <p className="text-red-600 text-xs">This quotation has been rejected.</p>
+                  <p className="text-red-600 text-xs mt-1">Advance amount: ₹{advanceAmount.toLocaleString()} (Refund processed)</p>
+                </div>
+              )}
             </div>
           </div>
 
@@ -408,12 +714,19 @@ function QuotationDetail({ quotation: q, onClose, onUpdate }: QuotationDetailPro
               Edit Quotation
             </button>
             <div className="flex gap-2">
-              <button onClick={() => handleUpdateStatus('Rejected')} className="px-4 py-2 text-sm font-semibold text-red-700 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition-colors">
-                Mark Rejected
-              </button>
-              <button onClick={() => handleUpdateStatus('Approved')} className="px-4 py-2 text-sm font-semibold text-green-700 bg-green-50 border border-green-200 rounded-lg hover:bg-green-100 transition-colors">
-                Mark Approved
-              </button>
+              {q.status !== "Rejected" && (
+                <button
+                  onClick={openRejectModal}
+                  className="px-4 py-2 text-sm font-semibold text-red-700 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition-colors flex items-center gap-1"
+                >
+                  <XCircle size={14} /> Reject with Refund
+                </button>
+              )}
+              {q.status !== "Approved" && q.status !== "Rejected" && (
+                <button onClick={() => handleUpdateStatus('Approved')} className="px-4 py-2 text-sm font-semibold text-green-700 bg-green-50 border border-green-200 rounded-lg hover:bg-green-100 transition-colors">
+                  Mark Approved
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -447,6 +760,14 @@ function QuotationDetail({ quotation: q, onClose, onUpdate }: QuotationDetailPro
                     <p className="text-xs text-slate-500">Products</p>
                     <p className="text-sm text-slate-700">{q.products[0].desc}</p>
                     <p className="text-xs text-slate-500">Qty: {q.products[0].qty.toLocaleString()} units</p>
+                  </div>
+                )}
+                {sampleStatus !== "N/A" && (
+                  <div className="mt-2 pt-2 border-t border-slate-200">
+                    <p className="text-xs text-slate-500">Sample Status</p>
+                    <p className={`text-sm font-medium ${sampleStatus === "Approved" ? "text-green-600" : "text-yellow-600"}`}>
+                      {sampleStatus}
+                    </p>
                   </div>
                 )}
               </div>
@@ -594,6 +915,7 @@ export function QuotationManagement() {
   const stats = {
     total: quotations.length,
     approved: quotations.filter((q) => q.status === "Approved").length,
+    rejected: quotations.filter((q) => q.status === "Rejected").length,
     convertedToSample: quotations.filter((q) => q.workflow.sampleOrder !== "N/A").length,
     convertedToProduction: quotations.filter((q) => q.workflow.productionOrder !== "N/A").length,
     totalValue: quotations.reduce((a, q) => a + q.commercials.total, 0),
@@ -668,6 +990,10 @@ export function QuotationManagement() {
             </select>
             <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
           </div>
+          <span className="text-xs text-slate-500">
+            <span className="text-green-600">{stats.approved} Approved</span> ·
+            <span className="text-red-600"> {stats.rejected} Rejected</span>
+          </span>
         </div>
 
         <div className="grid grid-cols-12 gap-4 px-6 py-3 bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase tracking-wider">
@@ -688,6 +1014,10 @@ export function QuotationManagement() {
               const locked = isLocked(q);
               const cleared = isCommerciallyCleared(q);
               const sampleReq = isSampleRequired(q);
+              const sampleStatus = q.workflow.sampleOrder;
+              const isAwaitingApproval = sampleStatus === "Awaiting Approval";
+              const isRejected = q.status === "Rejected";
+
               return (
                 <div key={q.id} className="grid grid-cols-12 gap-4 px-6 py-4 items-center hover:bg-slate-50/80 transition-colors cursor-pointer group" onClick={() => setSelected(q)}>
                   <div className="col-span-3 min-w-0">
@@ -695,6 +1025,16 @@ export function QuotationManagement() {
                       <p className="text-slate-900 font-bold text-sm">{q.id}</p>
                       <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded font-mono">{q.version}</span>
                       {locked && <Lock size={12} className="text-amber-500" />}
+                      {isAwaitingApproval && (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] bg-yellow-100 text-yellow-700 border border-yellow-200">
+                          <Clock size={10} /> Pending
+                        </span>
+                      )}
+                      {isRejected && (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] bg-red-100 text-red-700 border border-red-200">
+                          <XCircle size={10} /> Rejected
+                        </span>
+                      )}
                     </div>
                     <p className="text-slate-500 text-xs truncate mt-0.5">{q.customer}</p>
                   </div>
@@ -718,7 +1058,12 @@ export function QuotationManagement() {
                         <Package size={12} /> Prod: {q.workflow.productionOrder}
                       </span>
                     ) : q.workflow.sampleOrder !== "N/A" ? (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-amber-50 text-amber-700 border border-amber-100">
+                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium border ${q.workflow.sampleOrder === "Awaiting Approval"
+                        ? "bg-yellow-50 text-yellow-700 border-yellow-200"
+                        : q.workflow.sampleOrder === "Approved"
+                          ? "bg-green-50 text-green-700 border-green-200"
+                          : "bg-amber-50 text-amber-700 border-amber-100"
+                        }`}>
                         <FlaskConical size={12} /> Sample: {q.workflow.sampleOrder}
                       </span>
                     ) : (

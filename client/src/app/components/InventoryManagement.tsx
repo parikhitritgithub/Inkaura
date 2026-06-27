@@ -5,16 +5,16 @@ import { supabase } from "../server/api";
 type Category = "All" | "Paper" | "Ink" | "Plate" | "Consumables";
 
 interface InventoryItem {
-  id: string;
+  id: number;
   item: string;
   category: string;
   current: number;
   min: number;
   max: number;
   unit: string;
-  unitCost: number;
+  unitcost: number;
   supplier: string;
-  last_order?: string;
+  lastorder?: string;
   created_at?: string;
   updated_at?: string;
 }
@@ -42,9 +42,9 @@ export function InventoryManagement() {
     min: 0,
     max: 0,
     unit: "",
-    unitCost: 0,
+    unitcost: 0,
     supplier: "",
-    last_order: "",
+    lastorder: "",
   });
   const [submitting, setSubmitting] = useState(false);
 
@@ -87,7 +87,7 @@ export function InventoryManagement() {
         },
         (payload) => {
           console.log('Inventory change:', payload);
-          loadInventory(); // Reload on any change
+          loadInventory();
         }
       )
       .subscribe();
@@ -105,7 +105,7 @@ export function InventoryManagement() {
 
   const lowStockCount = inventory.filter((i) => i.current < i.min).length;
   const outOfStockCount = inventory.filter((i) => i.current === 0).length;
-  const totalValue = inventory.reduce((a, i) => a + i.current * i.unitCost, 0);
+  const totalValue = inventory.reduce((a, i) => a + i.current * i.unitcost, 0);
 
   // Handle Add/Update Inventory
   const handleSubmit = async (e: React.FormEvent) => {
@@ -118,22 +118,24 @@ export function InventoryManagement() {
     try {
       setSubmitting(true);
 
+      const payload = {
+        item: formData.item,
+        category: formData.category,
+        current: formData.current,
+        min: formData.min,
+        max: formData.max,
+        unit: formData.unit,
+        unitcost: formData.unitcost,
+        supplier: formData.supplier || null,
+        lastorder: formData.lastorder || null,
+        updated_at: new Date().toISOString(),
+      };
+
       if (editingItem) {
         // Update existing item
         const { error } = await supabase
           .from('inventory')
-          .update({
-            item: formData.item,
-            category: formData.category,
-            current: formData.current,
-            min: formData.min,
-            max: formData.max,
-            unit: formData.unit,
-            unitCost: formData.unitCost,
-            supplier: formData.supplier,
-            last_order: formData.last_order || null,
-            updated_at: new Date().toISOString(),
-          })
+          .update(payload)
           .eq('id', editingItem.id);
 
         if (error) throw error;
@@ -143,17 +145,8 @@ export function InventoryManagement() {
         const { error } = await supabase
           .from('inventory')
           .insert([{
-            item: formData.item,
-            category: formData.category,
-            current: formData.current,
-            min: formData.min,
-            max: formData.max,
-            unit: formData.unit,
-            unitCost: formData.unitCost,
-            supplier: formData.supplier,
-            last_order: formData.last_order || null,
+            ...payload,
             created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
           }]);
 
         if (error) throw error;
@@ -168,9 +161,9 @@ export function InventoryManagement() {
         min: 0,
         max: 0,
         unit: "",
-        unitCost: 0,
+        unitcost: 0,
         supplier: "",
-        last_order: "",
+        lastorder: "",
       });
       setEditingItem(null);
       setShowAddModal(false);
@@ -184,7 +177,7 @@ export function InventoryManagement() {
   };
 
   // Handle Delete
-  const handleDelete = async (id: string) => {
+  const handleDelete = async (id: number) => {
     if (!confirm("Are you sure you want to delete this inventory item?")) return;
 
     try {
@@ -212,9 +205,9 @@ export function InventoryManagement() {
       min: item.min,
       max: item.max,
       unit: item.unit,
-      unitCost: item.unitCost,
+      unitcost: item.unitcost,
       supplier: item.supplier || "",
-      last_order: item.last_order || "",
+      lastorder: item.lastorder || "",
     });
     setShowAddModal(true);
   };
@@ -228,9 +221,9 @@ export function InventoryManagement() {
       min: 0,
       max: 0,
       unit: "",
-      unitCost: 0,
+      unitcost: 0,
       supplier: "",
-      last_order: "",
+      lastorder: "",
     });
     setEditingItem(null);
     setShowAddModal(false);
@@ -345,8 +338,8 @@ export function InventoryManagement() {
                   <label className="block text-sm font-medium text-slate-700 mb-1">Unit Cost (₹)</label>
                   <input
                     type="number"
-                    value={formData.unitCost}
-                    onChange={(e) => setFormData({ ...formData, unitCost: parseFloat(e.target.value) || 0 })}
+                    value={formData.unitcost}
+                    onChange={(e) => setFormData({ ...formData, unitcost: parseFloat(e.target.value) || 0 })}
                     placeholder="0"
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
                     min="0"
@@ -357,8 +350,8 @@ export function InventoryManagement() {
                   <label className="block text-sm font-medium text-slate-700 mb-1">Last Order Date</label>
                   <input
                     type="date"
-                    value={formData.last_order}
-                    onChange={(e) => setFormData({ ...formData, last_order: e.target.value })}
+                    value={formData.lastorder}
+                    onChange={(e) => setFormData({ ...formData, lastorder: e.target.value })}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
                   />
                 </div>
@@ -527,9 +520,9 @@ export function InventoryManagement() {
                         <span className="text-xs text-slate-500">{Math.round(fillPct)}%</span>
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-slate-600 text-xs">₹{item.unitCost.toLocaleString()}</td>
+                    <td className="px-4 py-3 text-slate-600 text-xs">₹{item.unitcost.toLocaleString()}</td>
                     <td className="px-4 py-3 text-slate-800 text-xs" style={{ fontWeight: 600 }}>
-                      ₹{(item.current * item.unitCost).toLocaleString()}
+                      ₹{(item.current * item.unitcost).toLocaleString()}
                     </td>
                     <td className="px-4 py-3 text-slate-500 text-xs">{item.supplier}</td>
                     <td className="px-4 py-3">
