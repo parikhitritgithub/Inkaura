@@ -1478,4 +1478,27 @@ export const api = {
             throw error;
         }
     },
+
+
+    getNextInvoiceNumber: async (): Promise<string> => {
+        try {
+            const { data, error } = await supabase
+                .from('invoices')
+                .select('invoice_id')
+                .like('invoice_id', 'INV-%')
+                .order('invoice_id', { ascending: false })
+                .limit(1);
+
+            if (error || !data || data.length === 0) {
+                return 'INV-1001';
+            }
+
+            const lastId = data[0].invoice_id; // e.g. "INV-1501"
+            const lastNum = parseInt(lastId.replace('INV-', ''), 10);
+            const nextNum = isNaN(lastNum) ? 1001 : lastNum + 1;
+            return `INV-${String(nextNum).padStart(4, '0')}`;
+        } catch {
+            return 'INV-1001';
+        }
+    },
 };
