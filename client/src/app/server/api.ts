@@ -223,15 +223,15 @@ export interface CreateSampleJobRequest {
     productId: number;
     sampleQuantity: number;
     sampleCost: number;
-    assignedTo: string;
+    assignedTo: string | null; // Allow null
     dueDate: string;
 }
 
 export interface CreateProductionJobRequest {
     quotationId: string;
     deliveryDate: string;
-    machineId: number;
-    operatorId: number;
+    machineId?: number;
+    operatorId?: number;
     priority: Priority;
 }
 
@@ -775,24 +775,23 @@ export const api = {
                 product_id: data.productId,
                 sample_quantity: data.sampleQuantity,
                 sample_cost: data.sampleCost,
-                assigned_to: data.assignedTo,
+                assigned_to: data.assignedTo || null, // Allow null
                 due_date: data.dueDate,
-                status: 'Pending',
+                status: 'Pending', // Start as Pending (needs assignment)
                 created_at: new Date().toISOString(),
             }])
             .select(`
-                *,
-                customers:customer_id(company_name),
-                employees:assigned_to(full_name),
-                quotation_products:product_id(product_name),
-                quotations:quotation_id(quotation_id, total_payment)
-            `)
+      *,
+      customers:customer_id(company_name),
+      employees:assigned_to(full_name),
+      quotation_products:product_id(product_name),
+      quotations:quotation_id(quotation_id, total_payment)
+    `)
             .single();
 
         if (error) throw new Error(error.message);
         return mapToSampleJob(result);
     },
-
     approveSample: async (id: string): Promise<SampleJob> => {
         const { data, error } = await supabase
             .from('sample_orders')
@@ -876,6 +875,8 @@ export const api = {
         }
     },
 
+    // In api.ts, find the createProductionJob function and replace it with this:
+
     createProductionJob: async (data: any): Promise<ProductionJob> => {
         try {
             // Check if this is from sample job (has sampleJobId) or from quotation (has quotationId)
@@ -884,10 +885,10 @@ export const api = {
                 const { data: sampleData, error: sampleError } = await supabase
                     .from('sample_orders')
                     .select(`
-                        *,
-                        quotations:quotation_id(quotation_id, total_payment),
-                        quotation_products:product_id(product_name, production_quantity)
-                    `)
+                    *,
+                    quotations:quotation_id(quotation_id, total_payment),
+                    quotation_products:product_id(product_name, production_quantity)
+                `)
                     .eq('sample_order_id', data.sampleJobId)
                     .single();
 
@@ -906,16 +907,17 @@ export const api = {
                         production_order_id: poId,
                         sample_order_id: data.sampleJobId,
                         quotation_id: sampleData.quotation_id,
-                        original_quantity: data.quantity,
-                        final_quantity: data.quantity,
-                        assigned_to: data.operatorId,
-                        machine_id: data.machineId,
-                        priority: data.priority,
-                        status: 'Pending',
+                        original_quantity: data.quantity || sampleData.sample_quantity || 0,
+                        final_quantity: data.quantity || sampleData.sample_quantity || 0,
+                        assigned_to: null,  // No operator assigned yet
+                        machine_id: null,   // No machine assigned yet
+                        priority: data.priority || 'Medium',
+                        status: 'Pending',  // Starts as Pending
                         progress: 0,
                         delivery_date: data.deliveryDate,
                         created_at: new Date().toISOString(),
                         value: estimatedValue,
+                        // REMOVED: created_by field
                     }])
                     .select(PRODUCTION_SELECT)
                     .single();
@@ -937,17 +939,55 @@ export const api = {
                 const { data: quotation, error: quoteError } = await supabase
                     .from('quotations')
                     .select(`
-                        *,
-                        quotation_products(*),
-                        customers:customer_id(company_name)
-                    `)
+                    *,
+                    quotation_products(*),
+                    customers:customer_id(company_name)
+                `)
                     .eq('quotation_id', data.quotationId)
                     .single();
 
-                if (quoteError) throw new Error('Quotation not found');
-                if (!quotation?.quotation_products?.length) throw new Error('No products in quotation');
+                if (quoteError) {
+                    console.error('Error fetching quotation:', quoteError);
+                    throw new Error('Quotation not found');
+                }
 
-                const product = quotation.quotation_products[0];
+                // Check if products exist, if not create a default product
+                let product = quotation.quotation_products?.[0];
+                let productQuantity = 1000;
+
+                if (!product) {
+                    // Create a default product in the database
+                    const defaultProduct = {
+                        quotation_id: data.quotationId,
+                        product_name: 'Custom Print Job',
+                        product_type: 'Custom',
+                        production_quantity: 1000,
+                        material_type: 'Standard',
+                        paper_gsm: 0,
+                        width_cm: 0,
+                        height_cm: 0,
+                        printing_technology: 'Offset',
+                        color_sides: 'Single',
+                        color_type: 'CMYK',
+                    };
+
+                    const { data: newProduct, error: insertError } = await supabase
+                        .from('quotation_products')
+                        .insert([defaultProduct])
+                        .select()
+                        .single();
+
+                    if (insertError) {
+                        console.warn('Could not create default product, using fallback values:', insertError);
+                        productQuantity = 1000;
+                    } else {
+                        product = newProduct;
+                        productQuantity = newProduct.production_quantity || 1000;
+                    }
+                } else {
+                    productQuantity = product.production_quantity || 1000;
+                }
+
                 const poId = `PO-${Date.now().toString().slice(-6)}`;
 
                 const { data: result, error: prodError } = await supabase
@@ -955,21 +995,25 @@ export const api = {
                     .insert([{
                         production_order_id: poId,
                         quotation_id: quotation.quotation_id,
-                        original_quantity: product.production_quantity || 0,
-                        final_quantity: product.production_quantity || 0,
-                        assigned_to: data.operatorId,
-                        machine_id: data.machineId,
-                        priority: data.priority,
-                        status: 'Pending',
+                        original_quantity: productQuantity,
+                        final_quantity: productQuantity,
+                        assigned_to: null,  // No operator assigned yet
+                        machine_id: null,   // No machine assigned yet
+                        priority: data.priority || 'Medium',
+                        status: 'Pending',  // Starts as Pending
                         progress: 0,
                         delivery_date: data.deliveryDate,
                         created_at: new Date().toISOString(),
                         value: quotation.total_payment || 0,
+                        // REMOVED: created_by field
                     }])
                     .select(PRODUCTION_SELECT)
                     .single();
 
-                if (prodError) throw new Error(prodError.message);
+                if (prodError) {
+                    console.error('Error creating production order:', prodError);
+                    throw new Error(prodError.message);
+                }
                 return mapToProductionJob(result);
             }
         } catch (error) {
@@ -1012,7 +1056,6 @@ export const api = {
 
     dispatchProductionOrder: async (productionOrderId: string, employeeId: number): Promise<void> => {
         try {
-            // First, get the production order to find associated sample
             const { data: productionOrder, error: fetchError } = await supabase
                 .from('production_orders')
                 .select('sample_order_id, quotation_id')
@@ -1024,7 +1067,6 @@ export const api = {
                 throw fetchError;
             }
 
-            // Insert dispatch record
             const { error: dispatchError } = await supabase
                 .from('dispatches')
                 .insert({
@@ -1039,7 +1081,6 @@ export const api = {
 
             if (dispatchError) throw dispatchError;
 
-            // Update production order status to Dispatched
             const { error: updateError } = await supabase
                 .from('production_orders')
                 .update({ status: 'Dispatched' })
@@ -1047,7 +1088,6 @@ export const api = {
 
             if (updateError) throw updateError;
 
-            // If there's a sample order associated, update it to Production Created if not already
             if (productionOrder?.sample_order_id) {
                 await supabase
                     .from('sample_orders')

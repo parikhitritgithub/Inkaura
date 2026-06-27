@@ -80,9 +80,15 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
     try {
       setUpdating(true);
       if (isSample) {
-        await api.updateSampleStatus(job.id, "In Progress");
+        await supabase
+          .from('sample_orders')
+          .update({ status: 'In Progress' })
+          .eq('sample_order_id', job.id);
       } else {
-        await api.updateProductionStatus(job.id, "In Progress");
+        await supabase
+          .from('production_orders')
+          .update({ status: 'In Progress' })
+          .eq('production_order_id', job.id);
       }
       setRunning(true);
       onStatusUpdate();
@@ -102,11 +108,16 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
 
     try {
       setUpdating(true);
-      const status = isSample ? "Pending" : "Pending";
       if (isSample) {
-        await api.updateSampleStatus(job.id, status);
+        await supabase
+          .from('sample_orders')
+          .update({ status: 'Pending' })
+          .eq('sample_order_id', job.id);
       } else {
-        await api.updateProductionStatus(job.id, status);
+        await supabase
+          .from('production_orders')
+          .update({ status: 'Pending' })
+          .eq('production_order_id', job.id);
       }
       setRunning(false);
       setShowPauseModal(false);
@@ -209,7 +220,10 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
     try {
       setUpdating(true);
       if (isSample) {
-        await api.updateSampleStatus(job.id, "Awaiting Approval");
+        await supabase
+          .from('sample_orders')
+          .update({ status: 'Awaiting Approval' })
+          .eq('sample_order_id', job.id);
 
         await supabase
           .from('job_activity_logs')
@@ -224,7 +238,10 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
 
         alert("✅ Sample job completed! Sent to supervisor for approval.");
       } else {
-        await api.updateProductionStatus(job.id, "Completed");
+        await supabase
+          .from('production_orders')
+          .update({ status: 'Completed', progress: 100 })
+          .eq('production_order_id', job.id);
         alert("✅ Production job marked as completed!");
       }
       setShowDoneModal(false);
@@ -285,12 +302,14 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
     if (job.status === "Completed") return "bg-green-50 text-green-700 border-green-200";
     if (job.status === "Approved") return "bg-green-50 text-green-700 border-green-200";
     if (job.status === "Production Created") return "bg-purple-50 text-purple-700 border-purple-200";
+    if (job.status === "In Progress") return "bg-indigo-50 text-indigo-700 border-indigo-200";
     return "bg-slate-100 text-slate-600 border-slate-200";
   };
 
   const getStatusDisplay = () => {
-    if (running) return "Running";
+    if (running && job.status === "In Progress") return "Running";
     if (job.status === "Awaiting Approval") return "⏳ Awaiting Approval";
+    if (job.status === "In Progress" && !running) return "Paused";
     return job.status;
   };
 
@@ -359,7 +378,8 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
             <div className="flex items-center gap-2 mb-0.5">
               {isSample ? (
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-amber-50 text-amber-700 border border-amber-200">
-                  <FlaskConical size={10} /> Sample                </span>
+                  <FlaskConical size={10} /> Sample
+                </span>
               ) : (
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-indigo-50 text-indigo-700 border border-indigo-200">
                   <Factory size={10} /> Production
@@ -723,8 +743,8 @@ export function MachineOperator() {
 
       const combined: AssignedJob[] = [];
 
+      // Add production jobs that are not completed or dispatched
       productionData.forEach(job => {
-        // Only show production jobs that are not completed or dispatched
         if (job.status !== "Completed" && job.status !== "Dispatched") {
           combined.push({
             id: job.id,
@@ -748,10 +768,9 @@ export function MachineOperator() {
         }
       });
 
+      // Add sample jobs that are not Production Created
       sampleData.forEach(job => {
-        // Only show sample jobs that are NOT "Production Created"
-        // These are jobs that have already been converted to production
-        if (job.status === "Pending" || job.status === "In Progress" || job.status === "Awaiting Approval") {
+        if (job.status !== "Production Created") {
           combined.push({
             id: job.id,
             type: 'sample',

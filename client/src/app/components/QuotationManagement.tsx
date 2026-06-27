@@ -85,14 +85,8 @@ function QuotationDetail({ quotation: q, onClose, onUpdate }: QuotationDetailPro
 
   // State for workflow
   const [creating, setCreating] = useState(false);
-  const [showCreateProductionModal, setShowCreateProductionModal] = useState(false);
-  const [machines, setMachines] = useState<{ id: number, name: string, type: string, status: string }[]>([]);
-  const [employees, setEmployees] = useState<{ id: number, name: string, role: string }[]>([]);
-  const [loadingDropdowns, setLoadingDropdowns] = useState(false);
-  const [dropdownError, setDropdownError] = useState<string | null>(null);
+  const [showSendToProductionModal, setShowSendToProductionModal] = useState(false);
   const [productionForm, setProductionForm] = useState({
-    machineId: 0,
-    operatorId: 0,
     priority: "Medium" as Priority,
     deliveryDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
   });
@@ -106,31 +100,6 @@ function QuotationDetail({ quotation: q, onClose, onUpdate }: QuotationDetailPro
     refundNotes: "",
     status: "Refunded",
   });
-
-  // State for Refund Details
-  const [showRefundDetails, setShowRefundDetails] = useState(false);
-
-  // Fetch dropdown data when modal opens
-  useEffect(() => {
-    if (showCreateProductionModal) {
-      const fetchDropdowns = async () => {
-        setLoadingDropdowns(true);
-        setDropdownError(null);
-        try {
-          const machinesData = await api.getMachines();
-          setMachines(machinesData);
-          const employeesData = await api.getEmployees();
-          setEmployees(employeesData);
-        } catch (err) {
-          console.error("Error fetching dropdown data:", err);
-          setDropdownError("Failed to load machines or employees. Please try again.");
-        } finally {
-          setLoadingDropdowns(false);
-        }
-      };
-      fetchDropdowns();
-    }
-  }, [showCreateProductionModal]);
 
   const handleUpdateStatus = async (status: string) => {
     try {
@@ -161,15 +130,11 @@ function QuotationDetail({ quotation: q, onClose, onUpdate }: QuotationDetailPro
     try {
       setCreating(true);
 
-      // Calculate advance received (assume it's been paid)
       const advanceReceived = q.commercials.total * (q.commercials.advanceRequiredPct / 100);
       const refundAmount = rejectData.refundAmount || advanceReceived;
 
-      // Update quotation status
       await api.updateQuotationStatus(q.id, "Rejected");
 
-      // Here you would update an invoice or create a refund record
-      // For now, we'll log the refund details
       console.log("Refund Details:", {
         quotationId: q.id,
         customer: q.customer,
@@ -182,9 +147,6 @@ function QuotationDetail({ quotation: q, onClose, onUpdate }: QuotationDetailPro
         status: rejectData.status,
         timestamp: new Date().toISOString(),
       });
-
-      // You could create a refund invoice here
-      // const refundInvoice = await createRefundInvoice(q, refundAmount);
 
       alert(`✅ Quotation rejected and refund of ₹${refundAmount.toLocaleString()} processed successfully!`);
       setShowRejectModal(false);
@@ -206,12 +168,10 @@ function QuotationDetail({ quotation: q, onClose, onUpdate }: QuotationDetailPro
   };
 
   // Handle Create Sample Job
+  // Handle Create Sample Job - Updated to match production workflow
   const handleCreateSampleJob = async () => {
     try {
       setCreating(true);
-
-      const employeesList = await api.getEmployees();
-      const defaultEmployee = employeesList.length > 0 ? employeesList[0].id : 1;
 
       if (!q.customerId) {
         alert('No customer associated with this quotation. Please select a customer.');
@@ -221,16 +181,19 @@ function QuotationDetail({ quotation: q, onClose, onUpdate }: QuotationDetailPro
 
       const productId = q.products && q.products.length > 0 ? q.products[0].id : 1;
 
+      // Create sample job WITHOUT assigning an operator/machine
+      // The supervisor will assign these in the Sample Jobs page
       await api.createSampleJob({
         quotationId: q.id,
         customerId: q.customerId,
         productId: productId,
         sampleQuantity: 5,
         sampleCost: q.commercials.total * 0.05,
-        assignedTo: String(defaultEmployee),
+        assignedTo: null, // No operator assigned - supervisor will assign
         dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
       });
-      alert("✅ Sample job created successfully! Waiting for supervisor approval.");
+
+      alert("✅ Sample job created successfully! Please assign machine and operator in Sample Jobs.");
       onUpdate();
       onClose();
     } catch (err) {
@@ -241,32 +204,32 @@ function QuotationDetail({ quotation: q, onClose, onUpdate }: QuotationDetailPro
     }
   };
 
-  // Handle Create Production Job
-  const handleCreateProduction = async () => {
-    if (!productionForm.machineId || productionForm.machineId === 0) {
-      alert("Please select a machine");
-      return;
-    }
-    if (!productionForm.operatorId || productionForm.operatorId === 0) {
-      alert("Please select an operator");
-      return;
-    }
-
+  // Handle Send to Production
+  // Handle Send to Production
+  // Handle Send to Production
+  const handleSendToProduction = async () => {
     try {
       setCreating(true);
       await api.createProductionJob({
         quotationId: q.id,
         deliveryDate: productionForm.deliveryDate,
-        machineId: productionForm.machineId,
-        operatorId: productionForm.operatorId,
         priority: productionForm.priority,
       });
-      onUpdate();
-      setShowCreateProductionModal(false);
-      alert("✅ Production job created successfully!");
+
+      // Close the modal first
+      setShowSendToProductionModal(false);
+
+      // Then update the data
+      await onUpdate();
+
+      // Show success message
+      alert("✅ Production job created successfully! Please assign machine and operator in Production Jobs.");
+
+      // Close the detail view to force refresh
+      onClose();
     } catch (err) {
-      console.error("Failed to create production job:", err);
-      alert("Failed to create production job. Please try again.");
+      console.error("Failed to send to production:", err);
+      alert("Failed to send to production. Please try again.");
     } finally {
       setCreating(false);
     }
@@ -620,7 +583,7 @@ function QuotationDetail({ quotation: q, onClose, onUpdate }: QuotationDetailPro
                     <p className="text-yellow-800 text-sm font-semibold">Sample Pending Approval</p>
                   </div>
                   <p className="text-yellow-600 text-xs">The sample job has been sent to the supervisor for approval.</p>
-                  <p className="text-yellow-600 text-xs mt-1">Once approved, you can create the production job.</p>
+                  <p className="text-yellow-600 text-xs mt-1">Once approved, you can send to production.</p>
                 </div>
               )}
 
@@ -632,7 +595,7 @@ function QuotationDetail({ quotation: q, onClose, onUpdate }: QuotationDetailPro
                     <p className="text-green-800 text-sm font-semibold">Sample Approved!</p>
                   </div>
                   <p className="text-green-600 text-xs">The sample has been approved by the supervisor.</p>
-                  <p className="text-green-600 text-xs mt-1">You can now create the production job.</p>
+                  <p className="text-green-600 text-xs mt-1">You can now send to production.</p>
                 </div>
               )}
 
@@ -660,19 +623,19 @@ function QuotationDetail({ quotation: q, onClose, onUpdate }: QuotationDetailPro
 
                   {sampleRequired && hasSampleOrder && sampleOrderApproved && (
                     <button
-                      onClick={() => setShowCreateProductionModal(true)}
+                      onClick={() => setShowSendToProductionModal(true)}
                       className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 transition-colors font-semibold text-sm shadow-sm"
                     >
-                      <Factory size={18} /> Create Production Job
+                      <Send size={18} /> Send to Production
                     </button>
                   )}
 
                   {!sampleRequired && (
                     <button
-                      onClick={() => setShowCreateProductionModal(true)}
+                      onClick={() => setShowSendToProductionModal(true)}
                       className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition-colors font-semibold text-sm shadow-sm"
                     >
-                      <Check size={18} /> Approve for Production
+                      <Send size={18} /> Send to Production
                     </button>
                   )}
 
@@ -732,16 +695,16 @@ function QuotationDetail({ quotation: q, onClose, onUpdate }: QuotationDetailPro
         </div>
       </div>
 
-      {/* Create Production Job Modal */}
-      {showCreateProductionModal && (
+      {/* Send to Production Modal */}
+      {showSendToProductionModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
               <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-                <Factory size={20} className="text-indigo-600" /> Create Production Job
+                <Send size={20} className="text-indigo-600" /> Send to Production
               </h3>
               <button
-                onClick={() => setShowCreateProductionModal(false)}
+                onClick={() => setShowSendToProductionModal(false)}
                 className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 transition-colors"
               >
                 <X size={20} />
@@ -769,64 +732,6 @@ function QuotationDetail({ quotation: q, onClose, onUpdate }: QuotationDetailPro
                       {sampleStatus}
                     </p>
                   </div>
-                )}
-              </div>
-
-              {/* Machine */}
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Machine</label>
-                {loadingDropdowns ? (
-                  <div className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm text-slate-400 bg-slate-50">
-                    Loading machines...
-                  </div>
-                ) : dropdownError ? (
-                  <div className="text-red-600 text-sm">{dropdownError}</div>
-                ) : (
-                  <select
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
-                    value={productionForm.machineId}
-                    onChange={(e) => setProductionForm({ ...productionForm, machineId: Number(e.target.value) })}
-                  >
-                    <option value="0">Select Machine</option>
-                    {machines.length === 0 ? (
-                      <option value="" disabled>No machines available</option>
-                    ) : (
-                      machines.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.name} {m.type ? `(${m.type})` : ''} {m.status ? `- ${m.status}` : ''}
-                        </option>
-                      ))
-                    )}
-                  </select>
-                )}
-              </div>
-
-              {/* Operator */}
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Operator</label>
-                {loadingDropdowns ? (
-                  <div className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm text-slate-400 bg-slate-50">
-                    Loading operators...
-                  </div>
-                ) : dropdownError ? (
-                  <div className="text-red-600 text-sm">{dropdownError}</div>
-                ) : (
-                  <select
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
-                    value={productionForm.operatorId}
-                    onChange={(e) => setProductionForm({ ...productionForm, operatorId: Number(e.target.value) })}
-                  >
-                    <option value="0">Select Operator</option>
-                    {employees.length === 0 ? (
-                      <option value="" disabled>No operators available</option>
-                    ) : (
-                      employees.map((e) => (
-                        <option key={e.id} value={e.id}>
-                          {e.name} {e.role ? `(${e.role})` : ''}
-                        </option>
-                      ))
-                    )}
-                  </select>
                 )}
               </div>
 
@@ -858,24 +763,24 @@ function QuotationDetail({ quotation: q, onClose, onUpdate }: QuotationDetailPro
 
             <div className="px-6 py-4 border-t border-slate-100 bg-slate-50 rounded-b-2xl flex justify-end gap-3">
               <button
-                onClick={() => setShowCreateProductionModal(false)}
+                onClick={() => setShowSendToProductionModal(false)}
                 className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
               >
                 Cancel
               </button>
               <button
-                onClick={handleCreateProduction}
-                disabled={creating || loadingDropdowns}
+                onClick={handleSendToProduction}
+                disabled={creating}
                 className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
               >
                 {creating ? (
                   <>
                     <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    Creating...
+                    Sending...
                   </>
                 ) : (
                   <>
-                    <Factory size={16} /> Create Production Job
+                    <Send size={16} /> Send to Production
                   </>
                 )}
               </button>

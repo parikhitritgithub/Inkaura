@@ -9,7 +9,8 @@ import {
   api,
   SampleJob,
   SampleStatus,
-  Priority
+  Priority,
+  supabase
 } from "../server/api";
 
 // Status configuration
@@ -67,7 +68,6 @@ export function SampleJobs() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"All" | SampleStatus>("All");
   const [selectedSample, setSelectedSample] = useState<SampleJob | null>(null);
-  const [showCreateProduction, setShowCreateProduction] = useState(false);
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [rejectionReason, setRejectionReason] = useState("");
   const [creating, setCreating] = useState(false);
@@ -85,8 +85,6 @@ export function SampleJobs() {
   // State for dropdowns
   const [employees, setEmployees] = useState<{ id: number; name: string; role: string }[]>([]);
   const [machines, setMachines] = useState<{ id: number; name: string; type: string; status: string }[]>([]);
-  const [customers, setCustomers] = useState<{ id: string; name: string; email: string }[]>([]);
-  const [products, setProducts] = useState<{ id: number; name: string; price: number }[]>([]);
   const [loadingDropdowns, setLoadingDropdowns] = useState(false);
 
   // Load sample jobs
@@ -107,16 +105,12 @@ export function SampleJobs() {
   const loadDropdownData = async () => {
     try {
       setLoadingDropdowns(true);
-      const [employeesData, machinesData, customersData, productsData] = await Promise.all([
+      const [employeesData, machinesData] = await Promise.all([
         api.getEmployees(),
         api.getMachines(),
-        api.getCustomers(),
-        api.getProducts(),
       ]);
       setEmployees(employeesData);
       setMachines(machinesData);
-      setCustomers(customersData);
-      setProducts(productsData);
     } catch (err) {
       console.warn('Failed to load dropdown data:', err);
     } finally {
@@ -177,7 +171,15 @@ export function SampleJobs() {
 
   // Handle Assign/Edit Machine and Operator
   const handleAssign = async () => {
-    if (!assignSample) return;
+    if (!assignSample) {
+      console.error('No sample selected for assignment');
+      alert("No sample selected");
+      return;
+    }
+
+    console.log('Assign Sample:', assignSample);
+    console.log('Assign Form:', assignForm);
+
     if (assignForm.machineId === 0) {
       alert("Please select a machine");
       return;
@@ -190,15 +192,37 @@ export function SampleJobs() {
     try {
       setCreating(true);
 
-      // Update sample job status to "In Progress"
-      await api.updateSampleStatus(assignSample.id, "In Progress");
+      const updateData = {
+        machine_id: assignForm.machineId,
+        assigned_to: assignForm.operatorId,
+        status: 'In Progress'
+      };
+
+      console.log('Updating with data:', updateData);
+      console.log('Where sample_order_id =', assignSample.id);
+
+      const { data, error: updateError } = await supabase
+        .from('sample_orders')
+        .update(updateData)
+        .eq('sample_order_id', assignSample.id)
+        .select();
+
+      if (updateError) {
+        console.error('Update error:', updateError);
+        throw updateError;
+      }
+
+      console.log('Update successful, returned data:', data);
 
       await loadSampleJobs();
       setShowAssignModal(false);
       setAssignSample(null);
       alert(isEditing ? "Assignment updated successfully!" : "Machine and Operator assigned successfully!");
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to assign machine and operator');
+      console.error('Failed to assign:', err);
+      const errorMessage = err instanceof Error ? err.message : 'Failed to assign machine and operator';
+      setError(errorMessage);
+      alert(`Error: ${errorMessage}`);
     } finally {
       setCreating(false);
     }
@@ -210,11 +234,7 @@ export function SampleJobs() {
       setProcessingId(job.id);
       await api.approveSample(job.id);
       await loadSampleJobs();
-      const updatedJob = sampleJobs.find(j => j.id === job.id);
-      if (updatedJob) {
-        setSelectedSample(updatedJob);
-        setShowCreateProduction(true);
-      }
+      alert("✅ Sample approved successfully! Sales person can now send to production from Quotation page.");
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to approve sample');
     } finally {
@@ -235,39 +255,6 @@ export function SampleJobs() {
       setSelectedSample(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to reject sample');
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  // Create production job from sample
-  const handleCreateProduction = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedSample) return;
-
-    const formData = new FormData(e.target as HTMLFormElement);
-    const quantity = parseInt(formData.get('quantity') as string);
-    const deliveryDate = formData.get('deliveryDate') as string;
-    const machineId = parseInt(formData.get('machineId') as string);
-    const operatorId = parseInt(formData.get('operatorId') as string);
-    const priority = formData.get('priority') as Priority;
-
-    try {
-      setCreating(true);
-      await api.createProductionJob({
-        sampleJobId: selectedSample.id,
-        quantity,
-        deliveryDate,
-        machineId,
-        operatorId,
-        priority,
-      });
-      await loadSampleJobs();
-      setShowCreateProduction(false);
-      setSelectedSample(null);
-      navigate('/production-jobs');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create production job');
     } finally {
       setCreating(false);
     }
@@ -356,10 +343,17 @@ export function SampleJobs() {
             <div className="flex gap-2 pt-4 mt-4 border-t border-slate-100">
               <button
                 onClick={handleAssign}
-                disabled={creating}
-                className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={creating || loadingDropdowns}
+                className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
-                {creating ? 'Saving...' : isEditing ? 'Update Assignment' : 'Assign Machine & Operator'}
+                {creating ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  isEditing ? 'Update Assignment' : 'Assign Machine & Operator'
+                )}
               </button>
               <button
                 onClick={() => setShowAssignModal(false)}
@@ -524,6 +518,7 @@ export function SampleJobs() {
 
                 {/* Action Buttons */}
                 <div className="flex items-center gap-2 flex-wrap">
+                  {/* Assign Machine button for pending jobs */}
                   {isPending && (
                     <button
                       onClick={() => handleOpenAssign(job)}
@@ -575,15 +570,9 @@ export function SampleJobs() {
                       <Factory size={14} /> View Production
                     </button>
                   ) : isApproved ? (
-                    <button
-                      onClick={() => {
-                        setSelectedSample(job);
-                        setShowCreateProduction(true);
-                      }}
-                      className="w-full flex items-center justify-center gap-1 px-3 py-2 text-xs bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 transition-colors font-medium"
-                    >
-                      <Plus size={14} /> Create Production Job
-                    </button>
+                    <div className="w-full text-center py-2 px-3 rounded-lg text-xs bg-green-50 text-green-700 border border-green-200">
+                      ✅ Sample Approved - Ready for Production
+                    </div>
                   ) : isRejected ? (
                     <button
                       onClick={() => {
@@ -607,120 +596,6 @@ export function SampleJobs() {
               </div>
             );
           })}
-        </div>
-      )}
-
-      {/* Create Production Modal */}
-      {showCreateProduction && selectedSample && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-slate-900 flex items-center gap-2">
-                <Factory size={18} className="text-indigo-600" /> Create Production Job
-              </h3>
-              <button onClick={() => setShowCreateProduction(false)} className="text-slate-400 hover:text-slate-600">
-                <X size={20} />
-              </button>
-            </div>
-
-            <p className="text-sm text-slate-500 mb-4">
-              Create a production job from sample <span className="font-semibold text-slate-700">{selectedSample.id}</span>
-            </p>
-
-            <div className="bg-slate-50 rounded-lg p-3 mb-4 space-y-1">
-              <p className="text-xs text-slate-500">Customer</p>
-              <p className="text-sm font-medium text-slate-900">{selectedSample.customer}</p>
-              <p className="text-xs text-slate-500 mt-1">Product</p>
-              <p className="text-sm font-medium text-slate-900">{selectedSample.product}</p>
-            </div>
-
-            <form onSubmit={handleCreateProduction} className="space-y-3">
-              <div>
-                <label className="text-xs text-slate-500 block mb-1">Production Quantity *</label>
-                <input
-                  type="number"
-                  name="quantity"
-                  defaultValue={selectedSample.sampleQuantity * 100}
-                  required
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs text-slate-500 block mb-1">Delivery Date *</label>
-                <input
-                  type="date"
-                  name="deliveryDate"
-                  defaultValue={new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]}
-                  required
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs text-slate-500 block mb-1">Machine *</label>
-                <select
-                  name="machineId"
-                  required
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
-                >
-                  <option value="">Select Machine</option>
-                  {machines.map((machine) => (
-                    <option key={machine.id} value={machine.id}>
-                      {machine.name} {machine.type ? `(${machine.type})` : ''}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="text-xs text-slate-500 block mb-1">Operator *</label>
-                <select
-                  name="operatorId"
-                  required
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
-                >
-                  <option value="">Select Operator</option>
-                  {employees.map((employee) => (
-                    <option key={employee.id} value={employee.id}>
-                      {employee.name} {employee.role ? `(${employee.role})` : ''}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="text-xs text-slate-500 block mb-1">Priority *</label>
-                <select
-                  name="priority"
-                  defaultValue="Medium"
-                  required
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
-                >
-                  <option value="Low">Low</option>
-                  <option value="Medium">Medium</option>
-                  <option value="High">High</option>
-                </select>
-              </div>
-
-              <div className="flex gap-2 pt-2">
-                <button
-                  type="submit"
-                  disabled={creating || loadingDropdowns}
-                  className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {creating ? 'Creating...' : 'Create Production Job'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowCreateProduction(false)}
-                  className="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 transition-colors text-sm font-medium"
-                >
-                  Cancel
-                </button>
-              </div>
-            </form>
-          </div>
         </div>
       )}
 
@@ -750,9 +625,16 @@ export function SampleJobs() {
               <button
                 onClick={handleReject}
                 disabled={!rejectionReason.trim() || creating}
-                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
-                {creating ? 'Rejecting...' : 'Reject Sample'}
+                {creating ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    Rejecting...
+                  </>
+                ) : (
+                  'Reject Sample'
+                )}
               </button>
               <button
                 onClick={() => {

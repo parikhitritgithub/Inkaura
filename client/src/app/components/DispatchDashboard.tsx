@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Package, MapPin, Phone, CheckCircle, RefreshCw } from "lucide-react";
-import { supabase, api } from "../../server/api";
+import { supabase, api } from "../server/api";
 
 interface DispatchOrder {
   id: string;

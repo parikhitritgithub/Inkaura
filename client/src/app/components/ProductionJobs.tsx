@@ -3,9 +3,10 @@ import { useLocation } from "react-router-dom";
 import {
     Search, Calendar, User, Clock, AlertCircle, CheckCircle, Truck,
     Package, Settings, Eye, RefreshCw, AlertTriangle,
-    Plus, Edit, Save, X as CloseIcon, ArrowRight
+    Plus, Edit, Save, X as CloseIcon, ArrowRight, Factory, Users
 } from "lucide-react";
 import { api, ProductionJob, ProductionStatus, Priority } from "../server/api";
+import { supabase } from "../server/api";
 
 const statusConfig: Record<ProductionStatus, { label: string; bg: string; text: string; border: string; icon: React.ReactNode }> = {
     "Pending": {
@@ -68,8 +69,18 @@ export function ProductionJobs() {
     const [viewMode, setViewMode] = useState<"card" | "table">("card");
     const [selectedJob, setSelectedJob] = useState<ProductionJob | null>(null);
     const [showProgressModal, setShowProgressModal] = useState(false);
+    const [showAssignModal, setShowAssignModal] = useState(false);
     const [progressValue, setProgressValue] = useState<number>(0);
     const [updating, setUpdating] = useState(false);
+
+    // Assignment form state
+    const [assignmentData, setAssignmentData] = useState({
+        machineId: 0,
+        operatorId: 0,
+    });
+    const [machines, setMachines] = useState<{ id: number; name: string; type: string; status: string }[]>([]);
+    const [employees, setEmployees] = useState<{ id: number; name: string; role: string }[]>([]);
+    const [loadingDropdowns, setLoadingDropdowns] = useState(false);
 
     // Load production jobs
     const loadProductionJobs = async () => {
@@ -85,17 +96,30 @@ export function ProductionJobs() {
         }
     };
 
+    // Load dropdown data
+    const loadDropdownData = async () => {
+        setLoadingDropdowns(true);
+        try {
+            const [machinesData, employeesData] = await Promise.all([
+                api.getMachines(),
+                api.getEmployees()
+            ]);
+            setMachines(machinesData);
+            setEmployees(employeesData);
+        } catch (err) {
+            console.error('Error loading dropdown data:', err);
+            setError('Failed to load machines or employees');
+        } finally {
+            setLoadingDropdowns(false);
+        }
+    };
+
     useEffect(() => {
         loadProductionJobs();
     }, []);
 
     const filtered = productionJobs.filter((job) => {
-        // Hide fully completed or dispatched jobs from the main "All" view
-        const isCompleted = job.status === "Dispatched" || job.progress === 100;
-        if (statusFilter === "All" && isCompleted) {
-            return false;
-        }
-
+        // Show all jobs including completed/dispatched when filter is specifically selected
         const matchesSearch = job.id.toLowerCase().includes(search.toLowerCase()) ||
             job.customer.toLowerCase().includes(search.toLowerCase()) ||
             job.product.toLowerCase().includes(search.toLowerCase()) ||
@@ -143,6 +167,51 @@ export function ProductionJobs() {
         }
     };
 
+    // Assign machine and operator
+    const handleAssign = async () => {
+        if (!selectedJob) return;
+        if (!assignmentData.machineId || assignmentData.machineId === 0) {
+            setError('Please select a machine');
+            return;
+        }
+        if (!assignmentData.operatorId || assignmentData.operatorId === 0) {
+            setError('Please select an operator');
+            return;
+        }
+
+        try {
+            setUpdating(true);
+            // Update the production order with machine and operator
+            const { error } = await supabase
+                .from('production_orders')
+                .update({
+                    machine_id: assignmentData.machineId,
+                    assigned_to: assignmentData.operatorId,
+                })
+                .eq('production_order_id', selectedJob.id);
+
+            if (error) throw error;
+
+            await loadProductionJobs();
+            setShowAssignModal(false);
+            setSelectedJob(null);
+            setAssignmentData({ machineId: 0, operatorId: 0 });
+            alert('✅ Machine and operator assigned successfully!');
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Failed to assign machine and operator');
+        } finally {
+            setUpdating(false);
+        }
+    };
+
+    // Open assign modal
+    const openAssignModal = async (job: ProductionJob) => {
+        setSelectedJob(job);
+        await loadDropdownData();
+        setAssignmentData({ machineId: 0, operatorId: 0 });
+        setShowAssignModal(true);
+    };
+
     // Get next status for workflow
     const getNextStatus = (currentStatus: ProductionStatus): ProductionStatus | null => {
         const workflow: Record<ProductionStatus, ProductionStatus | null> = {
@@ -164,6 +233,11 @@ export function ProductionJobs() {
             "Dispatched": "Dispatched ✓",
         };
         return labels[status];
+    };
+
+    // Check if job has machine and operator assigned
+    const isJobAssigned = (job: ProductionJob) => {
+        return job.machine && job.machine !== 'Unassigned' && job.assignedTo && job.assignedTo !== 'Unassigned';
     };
 
     if (loading) {
@@ -197,6 +271,7 @@ export function ProductionJobs() {
                     <p className="text-slate-500 text-sm mt-0.5">
                         {productionJobs.filter(j => j.status === "In Progress").length} in production ·
                         {productionJobs.filter(j => j.status === "QC Pending").length} in QC ·
+                        {productionJobs.filter(j => j.status === "Pending").length} pending assignment ·
                         {productionJobs.length} total
                     </p>
                 </div>
@@ -275,9 +350,11 @@ export function ProductionJobs() {
                     {filtered.map((job) => {
                         const conf = statusConfig[job.status];
                         const isPending = job.status === "Pending";
-                        const statusText = isPending ? "Waiting for Machine" : conf.label;
+                        const statusText = isPending ? "Pending Assignment" : conf.label;
                         const nextStatus = getNextStatus(job.status);
                         const canProgress = nextStatus !== null;
+                        const isAssigned = isJobAssigned(job);
+                        const showAssignButton = job.status === "Pending" && !isAssigned;
 
                         return (
                             <div key={job.id} className="bg-white border border-slate-200 rounded-xl p-5 hover:shadow-md transition-all">
@@ -314,11 +391,11 @@ export function ProductionJobs() {
                                     </div>
                                     <div className="flex items-center gap-1.5 text-slate-500">
                                         <User size={11} />
-                                        <span className="text-slate-700 truncate">{job.assignedTo}</span>
+                                        <span className="text-slate-700 truncate">{job.assignedTo || 'Not Assigned'}</span>
                                     </div>
                                     <div className="flex items-center gap-1.5 text-slate-500">
-                                        <Package size={11} />
-                                        <span className="text-slate-700 truncate">{job.machine}</span>
+                                        <Factory size={11} />
+                                        <span className="text-slate-700 truncate">{job.machine || 'Not Assigned'}</span>
                                     </div>
                                     <div className="flex items-center gap-1.5 text-slate-500">
                                         <Settings size={11} />
@@ -334,7 +411,15 @@ export function ProductionJobs() {
                                 </div>
 
                                 <div className="flex items-center gap-2 mt-3 pt-3 border-t border-slate-100">
-                                    {canProgress && (
+                                    {showAssignButton && (
+                                        <button
+                                            onClick={() => openAssignModal(job)}
+                                            className="flex-1 flex items-center justify-center gap-1 px-3 py-1.5 text-xs bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-medium"
+                                        >
+                                            <Users size={12} /> Assign Machine & Operator
+                                        </button>
+                                    )}
+                                    {canProgress && isAssigned && (
                                         <button
                                             onClick={() => handleStatusUpdate(job.id, nextStatus)}
                                             disabled={updating}
@@ -342,6 +427,11 @@ export function ProductionJobs() {
                                         >
                                             <ArrowRight size={12} /> {getStatusActionLabel(job.status)}
                                         </button>
+                                    )}
+                                    {canProgress && !isAssigned && job.status === "Pending" && (
+                                        <div className="flex-1 text-center text-xs text-amber-600">
+                                            ⚠️ Assign machine & operator first
+                                        </div>
                                     )}
                                     <button
                                         onClick={() => {
@@ -364,7 +454,7 @@ export function ProductionJobs() {
                         <table className="w-full text-sm">
                             <thead>
                                 <tr className="bg-slate-50 border-b border-slate-200">
-                                    {["ID", "Quotation", "Product", "Customer", "Status", "Machine", "Assigned To", "Progress", "Due Date", "Value", "Actions"].map((h) => (
+                                    {["ID", "Quotation", "Product", "Customer", "Status", "Machine", "Operator", "Progress", "Due Date", "Value", "Actions"].map((h) => (
                                         <th key={h} className="text-left text-xs text-slate-500 px-4 py-2.5 whitespace-nowrap font-medium">{h}</th>
                                     ))}
                                 </tr>
@@ -374,6 +464,8 @@ export function ProductionJobs() {
                                     const conf = statusConfig[job.status];
                                     const nextStatus = getNextStatus(job.status);
                                     const canProgress = nextStatus !== null;
+                                    const isAssigned = isJobAssigned(job);
+                                    const showAssignButton = job.status === "Pending" && !isAssigned;
 
                                     return (
                                         <tr key={job.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
@@ -388,8 +480,8 @@ export function ProductionJobs() {
                                                     {conf.label}
                                                 </span>
                                             </td>
-                                            <td className="px-4 py-3 text-slate-600 text-xs whitespace-nowrap">{job.machine}</td>
-                                            <td className="px-4 py-3 text-slate-600 text-xs whitespace-nowrap">{job.assignedTo}</td>
+                                            <td className="px-4 py-3 text-slate-600 text-xs whitespace-nowrap">{job.machine || 'Not Assigned'}</td>
+                                            <td className="px-4 py-3 text-slate-600 text-xs whitespace-nowrap">{job.assignedTo || 'Not Assigned'}</td>
                                             <td className="px-4 py-3">
                                                 <div className="flex items-center gap-2">
                                                     <div className="w-16 h-1.5 rounded-full bg-slate-100 overflow-hidden">
@@ -402,7 +494,15 @@ export function ProductionJobs() {
                                             <td className="px-4 py-3 text-slate-800 text-xs font-bold">₹{job.value.toLocaleString()}</td>
                                             <td className="px-4 py-3">
                                                 <div className="flex items-center gap-1">
-                                                    {canProgress && (
+                                                    {showAssignButton && (
+                                                        <button
+                                                            onClick={() => openAssignModal(job)}
+                                                            className="px-2 py-1 text-xs bg-emerald-100 text-emerald-700 rounded hover:bg-emerald-200 transition-colors"
+                                                        >
+                                                            Assign
+                                                        </button>
+                                                    )}
+                                                    {canProgress && isAssigned && (
                                                         <button
                                                             onClick={() => handleStatusUpdate(job.id, nextStatus)}
                                                             disabled={updating}
@@ -428,6 +528,107 @@ export function ProductionJobs() {
                                 })}
                             </tbody>
                         </table>
+                    </div>
+                </div>
+            )}
+
+            {/* Assign Machine & Operator Modal */}
+            {showAssignModal && selectedJob && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                    <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4">
+                        <div className="flex items-center justify-between mb-4">
+                            <h3 className="text-lg font-semibold text-slate-900 flex items-center gap-2">
+                                <Users size={20} className="text-emerald-600" /> Assign Machine & Operator
+                            </h3>
+                            <button onClick={() => setShowAssignModal(false)} className="text-slate-400 hover:text-slate-600">
+                                <CloseIcon size={20} />
+                            </button>
+                        </div>
+
+                        <p className="text-sm text-slate-500 mb-4">
+                            Assign resources for <span className="font-semibold text-slate-700">{selectedJob.id}</span>
+                        </p>
+
+                        <div className="bg-slate-50 rounded-lg p-3 mb-4 space-y-1">
+                            <p className="text-xs text-slate-500">Product</p>
+                            <p className="text-sm font-medium text-slate-900">{selectedJob.product}</p>
+                            <p className="text-xs text-slate-500 mt-1">Customer</p>
+                            <p className="text-sm text-slate-700">{selectedJob.customer}</p>
+                            <p className="text-xs text-slate-500 mt-1">Quantity</p>
+                            <p className="text-sm text-slate-700">{selectedJob.quantity.toLocaleString()} pcs</p>
+                            <p className="text-xs text-slate-500 mt-1">Priority</p>
+                            <p className={`text-sm font-semibold ${selectedJob.priority === 'High' ? 'text-red-600' : selectedJob.priority === 'Medium' ? 'text-amber-600' : 'text-slate-600'}`}>
+                                {selectedJob.priority}
+                            </p>
+                        </div>
+
+                        {loadingDropdowns ? (
+                            <div className="text-center py-4">
+                                <div className="w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto" />
+                                <p className="text-xs text-slate-500 mt-2">Loading resources...</p>
+                            </div>
+                        ) : (
+                            <>
+                                {/* Machine Selection */}
+                                <div className="mb-4">
+                                    <label className="text-xs text-slate-500 block mb-1">Select Machine *</label>
+                                    <select
+                                        value={assignmentData.machineId}
+                                        onChange={(e) => setAssignmentData({ ...assignmentData, machineId: Number(e.target.value) })}
+                                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
+                                    >
+                                        <option value="0">Select a machine</option>
+                                        {machines.map((m) => (
+                                            <option key={m.id} value={m.id}>
+                                                {m.name} {m.type ? `(${m.type})` : ''} {m.status ? `- ${m.status}` : ''}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+
+                                {/* Operator Selection */}
+                                <div className="mb-4">
+                                    <label className="text-xs text-slate-500 block mb-1">Select Operator *</label>
+                                    <select
+                                        value={assignmentData.operatorId}
+                                        onChange={(e) => setAssignmentData({ ...assignmentData, operatorId: Number(e.target.value) })}
+                                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
+                                    >
+                                        <option value="0">Select an operator</option>
+                                        {employees.map((e) => (
+                                            <option key={e.id} value={e.id}>
+                                                {e.name} {e.role ? `(${e.role})` : ''}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                            </>
+                        )}
+
+                        <div className="flex gap-2 mt-4">
+                            <button
+                                onClick={handleAssign}
+                                disabled={updating || loadingDropdowns}
+                                className="flex-1 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                            >
+                                {updating ? (
+                                    <>
+                                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                        Assigning...
+                                    </>
+                                ) : (
+                                    <>
+                                        <Users size={16} /> Assign Resources
+                                    </>
+                                )}
+                            </button>
+                            <button
+                                onClick={() => setShowAssignModal(false)}
+                                className="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 transition-colors text-sm font-medium"
+                            >
+                                Cancel
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}
