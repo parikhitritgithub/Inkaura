@@ -1,22 +1,23 @@
-import { useState } from "react";
-import { AlertTriangle, Package, Plus, Search, TrendingDown, BarChart2, RefreshCw } from "lucide-react";
+import { useState, useEffect } from "react";
+import { AlertTriangle, Package, Plus, Search, TrendingDown, BarChart2, RefreshCw, Edit, Trash2, Save, X } from "lucide-react";
+import { supabase } from "../server/api";
 
 type Category = "All" | "Paper" | "Ink" | "Plate" | "Consumables";
 
-const inventory = [
-  { id: "INV-001", item: "Art Paper 130gsm (SRA3)", category: "Paper", current: 8, min: 50, max: 200, unit: "reams", unitCost: 850, supplier: "ITC Papercrafts", lastOrder: "Jun 1, 2026" },
-  { id: "INV-002", item: "Art Card 350gsm (SRA3)", category: "Paper", current: 45, min: 30, max: 150, unit: "reams", unitCost: 1200, supplier: "ITC Papercrafts", lastOrder: "Jun 10, 2026" },
-  { id: "INV-003", item: "Uncoated Bond 80gsm", category: "Paper", current: 120, min: 40, max: 300, unit: "reams", unitCost: 450, supplier: "JK Paper", lastOrder: "May 28, 2026" },
-  { id: "INV-004", item: "Cyan Ink (Process)", category: "Ink", current: 12, min: 25, max: 80, unit: "kg", unitCost: 4200, supplier: "Sun Chemical", lastOrder: "Jun 5, 2026" },
-  { id: "INV-005", item: "Magenta Ink (Process)", category: "Ink", current: 18, min: 25, max: 80, unit: "kg", unitCost: 4200, supplier: "Sun Chemical", lastOrder: "Jun 5, 2026" },
-  { id: "INV-006", item: "Yellow Ink (Process)", category: "Ink", current: 35, min: 25, max: 80, unit: "kg", unitCost: 3800, supplier: "Sun Chemical", lastOrder: "Jun 5, 2026" },
-  { id: "INV-007", item: "Black Ink (Process)", category: "Ink", current: 52, min: 30, max: 100, unit: "kg", unitCost: 2800, supplier: "Sun Chemical", lastOrder: "May 20, 2026" },
-  { id: "INV-008", item: "CTP Plate A2 (0.3mm)", category: "Plate", current: 3, min: 10, max: 50, unit: "pcs", unitCost: 1800, supplier: "Agfa Graphics", lastOrder: "Jun 8, 2026" },
-  { id: "INV-009", item: "CTP Plate A1 (0.3mm)", category: "Plate", current: 22, min: 10, max: 50, unit: "pcs", unitCost: 2400, supplier: "Agfa Graphics", lastOrder: "Jun 8, 2026" },
-  { id: "INV-010", item: "Lamination Film Gloss 27mic", category: "Consumables", current: 6, min: 10, max: 30, unit: "rolls", unitCost: 3200, supplier: "Cosmo Films", lastOrder: "Jun 3, 2026" },
-  { id: "INV-011", item: "UV Varnish (Spot)", category: "Consumables", current: 28, min: 15, max: 60, unit: "litres", unitCost: 1500, supplier: "Royal Coatings", lastOrder: "Jun 1, 2026" },
-  { id: "INV-012", item: "Blanket Offset (SM52)", category: "Consumables", current: 4, min: 4, max: 12, unit: "pcs", unitCost: 8500, supplier: "Prisco Group", lastOrder: "May 15, 2026" },
-];
+interface InventoryItem {
+  id: string;
+  item: string;
+  category: string;
+  current: number;
+  min: number;
+  max: number;
+  unit: string;
+  unitCost: number;
+  supplier: string;
+  last_order?: string;
+  created_at?: string;
+  updated_at?: string;
+}
 
 function getStockStatus(current: number, min: number) {
   const pct = current / min;
@@ -27,8 +28,74 @@ function getStockStatus(current: number, min: number) {
 }
 
 export function InventoryManagement() {
+  const [inventory, setInventory] = useState<InventoryItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [category, setCategory] = useState<Category>("All");
   const [search, setSearch] = useState("");
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
+  const [formData, setFormData] = useState({
+    item: "",
+    category: "Paper" as Category,
+    current: 0,
+    min: 0,
+    max: 0,
+    unit: "",
+    unitCost: 0,
+    supplier: "",
+    last_order: "",
+  });
+  const [submitting, setSubmitting] = useState(false);
+
+  // Load inventory from Supabase
+  const loadInventory = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const { data, error } = await supabase
+        .from('inventory')
+        .select('*')
+        .order('item');
+
+      if (error) throw error;
+      if (data) {
+        setInventory(data);
+      }
+    } catch (err) {
+      console.error("Failed to load inventory:", err);
+      setError("Failed to load inventory. Please refresh and try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadInventory();
+  }, []);
+
+  // Subscribe to real-time changes
+  useEffect(() => {
+    const subscription = supabase
+      .channel('inventory_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'inventory',
+        },
+        (payload) => {
+          console.log('Inventory change:', payload);
+          loadInventory(); // Reload on any change
+        }
+      )
+      .subscribe();
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
 
   const filtered = inventory.filter(
     (item) =>
@@ -37,20 +104,320 @@ export function InventoryManagement() {
   );
 
   const lowStockCount = inventory.filter((i) => i.current < i.min).length;
+  const outOfStockCount = inventory.filter((i) => i.current === 0).length;
   const totalValue = inventory.reduce((a, i) => a + i.current * i.unitCost, 0);
+
+  // Handle Add/Update Inventory
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formData.item || !formData.unit || formData.current < 0) {
+      alert("Please fill in all required fields");
+      return;
+    }
+
+    try {
+      setSubmitting(true);
+
+      if (editingItem) {
+        // Update existing item
+        const { error } = await supabase
+          .from('inventory')
+          .update({
+            item: formData.item,
+            category: formData.category,
+            current: formData.current,
+            min: formData.min,
+            max: formData.max,
+            unit: formData.unit,
+            unitCost: formData.unitCost,
+            supplier: formData.supplier,
+            last_order: formData.last_order || null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', editingItem.id);
+
+        if (error) throw error;
+        alert("Inventory item updated successfully!");
+      } else {
+        // Add new item
+        const { error } = await supabase
+          .from('inventory')
+          .insert([{
+            item: formData.item,
+            category: formData.category,
+            current: formData.current,
+            min: formData.min,
+            max: formData.max,
+            unit: formData.unit,
+            unitCost: formData.unitCost,
+            supplier: formData.supplier,
+            last_order: formData.last_order || null,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          }]);
+
+        if (error) throw error;
+        alert("Inventory item added successfully!");
+      }
+
+      // Reset form and close modal
+      setFormData({
+        item: "",
+        category: "Paper",
+        current: 0,
+        min: 0,
+        max: 0,
+        unit: "",
+        unitCost: 0,
+        supplier: "",
+        last_order: "",
+      });
+      setEditingItem(null);
+      setShowAddModal(false);
+      await loadInventory();
+    } catch (err) {
+      console.error("Failed to save inventory item:", err);
+      alert("Failed to save inventory item. Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Handle Delete
+  const handleDelete = async (id: string) => {
+    if (!confirm("Are you sure you want to delete this inventory item?")) return;
+
+    try {
+      const { error } = await supabase
+        .from('inventory')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+      alert("Inventory item deleted successfully!");
+      await loadInventory();
+    } catch (err) {
+      console.error("Failed to delete inventory item:", err);
+      alert("Failed to delete inventory item. Please try again.");
+    }
+  };
+
+  // Open edit modal
+  const handleEdit = (item: InventoryItem) => {
+    setEditingItem(item);
+    setFormData({
+      item: item.item,
+      category: item.category as Category,
+      current: item.current,
+      min: item.min,
+      max: item.max,
+      unit: item.unit,
+      unitCost: item.unitCost,
+      supplier: item.supplier || "",
+      last_order: item.last_order || "",
+    });
+    setShowAddModal(true);
+  };
+
+  // Reset form
+  const resetForm = () => {
+    setFormData({
+      item: "",
+      category: "Paper",
+      current: 0,
+      min: 0,
+      max: 0,
+      unit: "",
+      unitCost: 0,
+      supplier: "",
+      last_order: "",
+    });
+    setEditingItem(null);
+    setShowAddModal(false);
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+          <p className="text-sm text-slate-500">Loading inventory...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 space-y-6">
+      {/* Add/Edit Modal */}
+      {showAddModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 sticky top-0 bg-white">
+              <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                <Package size={20} className="text-indigo-600" />
+                {editingItem ? "Edit Inventory Item" : "Add New Inventory Item"}
+              </h3>
+              <button onClick={resetForm} className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 transition-colors">
+                <X size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmit} className="p-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Item Name *</label>
+                  <input
+                    type="text"
+                    value={formData.item}
+                    onChange={(e) => setFormData({ ...formData, item: e.target.value })}
+                    placeholder="e.g., Art Paper 130gsm"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Category *</label>
+                  <select
+                    value={formData.category}
+                    onChange={(e) => setFormData({ ...formData, category: e.target.value as Category })}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
+                  >
+                    <option value="Paper">Paper</option>
+                    <option value="Ink">Ink</option>
+                    <option value="Plate">Plate</option>
+                    <option value="Consumables">Consumables</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Unit *</label>
+                  <input
+                    type="text"
+                    value={formData.unit}
+                    onChange={(e) => setFormData({ ...formData, unit: e.target.value })}
+                    placeholder="e.g., reams, kg, pcs"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Current Stock *</label>
+                  <input
+                    type="number"
+                    value={formData.current}
+                    onChange={(e) => setFormData({ ...formData, current: parseFloat(e.target.value) || 0 })}
+                    placeholder="0"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
+                    required
+                    min="0"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Minimum Stock *</label>
+                  <input
+                    type="number"
+                    value={formData.min}
+                    onChange={(e) => setFormData({ ...formData, min: parseFloat(e.target.value) || 0 })}
+                    placeholder="0"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
+                    required
+                    min="0"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Maximum Stock</label>
+                  <input
+                    type="number"
+                    value={formData.max}
+                    onChange={(e) => setFormData({ ...formData, max: parseFloat(e.target.value) || 0 })}
+                    placeholder="0"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
+                    min="0"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Unit Cost (₹)</label>
+                  <input
+                    type="number"
+                    value={formData.unitCost}
+                    onChange={(e) => setFormData({ ...formData, unitCost: parseFloat(e.target.value) || 0 })}
+                    placeholder="0"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
+                    min="0"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Last Order Date</label>
+                  <input
+                    type="date"
+                    value={formData.last_order}
+                    onChange={(e) => setFormData({ ...formData, last_order: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
+                  />
+                </div>
+
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Supplier</label>
+                  <input
+                    type="text"
+                    value={formData.supplier}
+                    onChange={(e) => setFormData({ ...formData, supplier: e.target.value })}
+                    placeholder="e.g., ITC Papercrafts"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-4 mt-4 border-t border-slate-100">
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  {submitting ? (
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <Save size={16} />
+                  )}
+                  {submitting ? "Saving..." : editingItem ? "Update Item" : "Add Item"}
+                </button>
+                <button
+                  type="button"
+                  onClick={resetForm}
+                  className="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 transition-colors text-sm font-medium"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-slate-900" style={{ fontSize: "1.25rem", fontWeight: 700 }}>Inventory Management</h1>
           <p className="text-slate-500 text-sm mt-0.5">{inventory.length} items · {lowStockCount} low stock alerts</p>
         </div>
         <div className="flex gap-2">
-          <button className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 transition-colors">
-            <RefreshCw size={12} /> Issue Material
+          <button
+            onClick={loadInventory}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 transition-colors"
+          >
+            <RefreshCw size={12} /> Refresh
           </button>
-          <button className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg text-white transition-colors" style={{ background: "#4f46e5", fontWeight: 500 }}>
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg text-white transition-colors hover:bg-indigo-700"
+            style={{ background: "#4f46e5", fontWeight: 500 }}
+          >
             <Plus size={12} /> Add Item
           </button>
         </div>
@@ -61,7 +428,7 @@ export function InventoryManagement() {
         {[
           { label: "Total Items", value: inventory.length, icon: <Package size={16} />, color: "text-indigo-600 bg-indigo-50" },
           { label: "Low Stock Alerts", value: lowStockCount, icon: <AlertTriangle size={16} />, color: "text-amber-600 bg-amber-50" },
-          { label: "Out of Stock", value: inventory.filter(i => i.current === 0).length, icon: <TrendingDown size={16} />, color: "text-red-600 bg-red-50" },
+          { label: "Out of Stock", value: outOfStockCount, icon: <TrendingDown size={16} />, color: "text-red-600 bg-red-50" },
           { label: "Inventory Value", value: `₹${(totalValue / 100000).toFixed(1)}L`, icon: <BarChart2 size={16} />, color: "text-green-600 bg-green-50" },
         ].map((s) => (
           <div key={s.label} className="bg-card border border-border rounded-xl p-4">
@@ -81,6 +448,17 @@ export function InventoryManagement() {
           </p>
           <button className="text-xs text-amber-700 border border-amber-300 px-3 py-1 rounded-lg hover:bg-amber-100 transition-colors flex-shrink-0" style={{ fontWeight: 500 }}>
             Reorder All
+          </button>
+        </div>
+      )}
+
+      {/* Error message */}
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-center gap-2">
+          <AlertTriangle size={16} className="text-red-500 flex-shrink-0" />
+          <p className="text-sm text-red-600 flex-1">{error}</p>
+          <button onClick={() => setError(null)} className="text-red-500 hover:text-red-700">
+            <X size={14} />
           </button>
         </div>
       )}
@@ -115,7 +493,7 @@ export function InventoryManagement() {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-slate-50 border-b border-border">
-                {["Item", "Category", "Current Stock", "Min / Max", "Stock Level", "Unit Cost", "Total Value", "Supplier", "Status"].map((h) => (
+                {["Item", "Category", "Current Stock", "Min / Max", "Stock Level", "Unit Cost", "Total Value", "Supplier", "Status", "Actions"].map((h) => (
                   <th key={h} className="text-left text-xs text-slate-500 px-4 py-2.5 whitespace-nowrap" style={{ fontWeight: 500 }}>{h}</th>
                 ))}
               </tr>
@@ -131,12 +509,11 @@ export function InventoryManagement() {
                       <p className="text-slate-400 text-xs">{item.id}</p>
                     </td>
                     <td className="px-4 py-3">
-                      <span className={`text-xs px-2 py-0.5 rounded ${
-                        item.category === "Paper" ? "bg-indigo-50 text-indigo-700" :
-                        item.category === "Ink" ? "bg-purple-50 text-purple-700" :
-                        item.category === "Plate" ? "bg-sky-50 text-sky-700" :
-                        "bg-slate-100 text-slate-600"
-                      }`} style={{ fontWeight: 500 }}>{item.category}</span>
+                      <span className={`text-xs px-2 py-0.5 rounded ${item.category === "Paper" ? "bg-indigo-50 text-indigo-700" :
+                          item.category === "Ink" ? "bg-purple-50 text-purple-700" :
+                            item.category === "Plate" ? "bg-sky-50 text-sky-700" :
+                              "bg-slate-100 text-slate-600"
+                        }`} style={{ fontWeight: 500 }}>{item.category}</span>
                     </td>
                     <td className="px-4 py-3 text-slate-800 text-xs" style={{ fontWeight: 700 }}>
                       {item.current} {item.unit}
@@ -159,6 +536,24 @@ export function InventoryManagement() {
                       <span className={`inline-flex px-2 py-0.5 rounded border text-xs ${status.color}`} style={{ fontWeight: 500 }}>
                         {status.label}
                       </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => handleEdit(item)}
+                          className="p-1 text-slate-400 hover:text-indigo-600 rounded hover:bg-indigo-50 transition-colors"
+                          title="Edit"
+                        >
+                          <Edit size={14} />
+                        </button>
+                        <button
+                          onClick={() => handleDelete(item.id)}
+                          className="p-1 text-slate-400 hover:text-red-600 rounded hover:bg-red-50 transition-colors"
+                          title="Delete"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );

@@ -1,10 +1,12 @@
 import { useState, useEffect } from "react";
-import { Play, Pause, AlertTriangle, CheckCircle, Clock, ChevronDown, X, Cpu, RefreshCw, FlaskConical, Factory } from "lucide-react";
+import { Play, Pause, AlertTriangle, CheckCircle, Clock, ChevronDown, X, Cpu, RefreshCw, FlaskConical, Factory, Package, Trash2, Edit3 } from "lucide-react";
 import { api, ProductionJob, ProductionStatus, SampleJob, SampleStatus } from "../server/api";
+import { supabase } from "../server/api";
 
 const issueTypes = ["Registration problem", "Color inconsistency", "Paper jam", "Ink drying issue", "Machine vibration", "Other"];
+const pauseReasons = ["Material shortage", "Machine maintenance", "Operator break", "Quality check", "Customer approval needed", "Other"];
 
-// Combined Job interface
+// Combined Job interface with material tracking
 interface AssignedJob {
   id: string;
   type: 'sample' | 'production';
@@ -22,28 +24,59 @@ interface AssignedJob {
   sampleJobId?: string;
   productionJobId?: string;
   quotationId?: string;
+  materialUsed?: number;
+  materialWaste?: number;
+  materialUnit?: string;
+  materialName?: string;
+}
+
+interface InventoryItem {
+  id: string;
+  item: string;
+  category: string;
+  current: number;
+  min: number;
+  max: number;
+  unit: string;
+  unitCost: number;
+  supplier: string;
 }
 
 interface JobCardProps {
   job: AssignedJob;
   onStatusUpdate: () => void;
+  inventoryItems: InventoryItem[];
+  onInventoryUpdate: () => void;
+  currentEmployee: string;
 }
 
-function JobCard({ job, onStatusUpdate }: JobCardProps) {
+function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, currentEmployee }: JobCardProps) {
   const [running, setRunning] = useState(job.status === "In Progress");
   const [showIssue, setShowIssue] = useState(false);
   const [issueDesc, setIssueDesc] = useState("");
   const [issueType, setIssueType] = useState("");
   const [updating, setUpdating] = useState(false);
+  const [showPauseModal, setShowPauseModal] = useState(false);
+  const [pauseReason, setPauseReason] = useState("");
+  const [pauseNote, setPauseNote] = useState("");
+  const [materialUsed, setMaterialUsed] = useState(job.materialUsed || 0);
+  const [materialWaste, setMaterialWaste] = useState(job.materialWaste || 0);
+  const [showMaterialModal, setShowMaterialModal] = useState(false);
+  const [selectedInventoryItem, setSelectedInventoryItem] = useState<string>("");
+  const [materialQuantity, setMaterialQuantity] = useState(0);
+  const [wasteQuantity, setWasteQuantity] = useState(0);
+  const [materialNote, setMaterialNote] = useState("");
+
   const progress = job.quantity > 0 ? Math.round((job.progress || 0)) : 0;
   const isSample = job.type === 'sample';
+
+  const availableInventory = inventoryItems.filter(item => item.current > 0);
 
   const handleStartWork = async () => {
     try {
       setUpdating(true);
       if (isSample) {
-        // Update sample job status
-        await api.updateProductionStatus(job.id, "In Progress");
+        await api.updateSampleStatus(job.id, "In Progress");
       } else {
         await api.updateProductionStatus(job.id, "In Progress");
       }
@@ -58,18 +91,115 @@ function JobCard({ job, onStatusUpdate }: JobCardProps) {
   };
 
   const handlePauseWork = async () => {
+    if (!pauseReason) {
+      alert("Please select a reason for pausing");
+      return;
+    }
+
     try {
       setUpdating(true);
+      const status = isSample ? "Pending" : "Pending";
       if (isSample) {
-        await api.updateProductionStatus(job.id, "Pending");
+        await api.updateSampleStatus(job.id, status);
       } else {
-        await api.updateProductionStatus(job.id, "Pending");
+        await api.updateProductionStatus(job.id, status);
       }
       setRunning(false);
+      setShowPauseModal(false);
+      setPauseReason("");
+      setPauseNote("");
+
+      // Log pause reason to database
+      await supabase
+        .from('job_activity_logs')
+        .insert([{
+          job_id: job.id,
+          job_type: job.type,
+          activity_type: 'paused',
+          reason: pauseReason,
+          notes: pauseNote,
+          timestamp: new Date().toISOString()
+        }]);
+
       onStatusUpdate();
+      alert(`Job paused. Reason: ${pauseReason}`);
     } catch (err) {
       console.error("Failed to pause:", err);
       alert("Failed to pause. Please try again.");
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  const handleSubmitMaterialUsage = async () => {
+    if (!selectedInventoryItem) {
+      alert("Please select a material");
+      return;
+    }
+    if (materialQuantity <= 0) {
+      alert("Please enter quantity used");
+      return;
+    }
+
+    try {
+      setUpdating(true);
+
+      const inventoryItem = inventoryItems.find(item => item.id === selectedInventoryItem);
+      if (!inventoryItem) {
+        alert("Inventory item not found");
+        return;
+      }
+
+      if (inventoryItem.current < materialQuantity) {
+        alert(`Not enough stock. Available: ${inventoryItem.current} ${inventoryItem.unit}`);
+        return;
+      }
+
+      // Update inventory
+      const newQuantity = inventoryItem.current - materialQuantity;
+      await supabase
+        .from('inventory')
+        .update({ current: newQuantity })
+        .eq('id', inventoryItem.id);
+
+      // Log material usage
+      await supabase
+        .from('material_usage_logs')
+        .insert([{
+          job_id: job.id,
+          job_type: job.type,
+          inventory_item_id: inventoryItem.id,
+          quantity_used: materialQuantity,
+          quantity_waste: wasteQuantity || 0,
+          notes: materialNote,
+          timestamp: new Date().toISOString()
+        }]);
+
+      // Update job with material info
+      await supabase
+        .from(job.type === 'sample' ? 'sample_orders' : 'production_orders')
+        .update({
+          material_used: materialQuantity,
+          material_waste: wasteQuantity || 0,
+          material_used_at: new Date().toISOString()
+        })
+        .eq(job.type === 'sample' ? 'sample_order_id' : 'production_order_id', job.id);
+
+      setMaterialUsed(materialQuantity);
+      setMaterialWaste(wasteQuantity || 0);
+
+      setSelectedInventoryItem("");
+      setMaterialQuantity(0);
+      setWasteQuantity(0);
+      setMaterialNote("");
+      setShowMaterialModal(false);
+
+      onInventoryUpdate();
+      onStatusUpdate();
+      alert("Material usage recorded successfully!");
+    } catch (err) {
+      console.error("Failed to record material usage:", err);
+      alert("Failed to record material usage. Please try again.");
     } finally {
       setUpdating(false);
     }
@@ -79,11 +209,9 @@ function JobCard({ job, onStatusUpdate }: JobCardProps) {
     try {
       setUpdating(true);
       if (isSample) {
-        // For sample jobs, mark as "Awaiting Approval" (goes to supervisor)
-        await api.updateProductionStatus(job.id, "Awaiting Approval");
+        await api.updateSampleStatus(job.id, "Awaiting Approval");
         alert("Sample job completed! Sent to supervisor for approval.");
       } else {
-        // For production jobs, mark as "Completed"
         await api.updateProductionStatus(job.id, "Completed");
         alert("Production job marked as completed!");
       }
@@ -108,13 +236,17 @@ function JobCard({ job, onStatusUpdate }: JobCardProps) {
 
     try {
       setUpdating(true);
-      console.log("Issue reported:", {
-        jobId: job.id,
-        jobType: job.type,
-        issueType,
-        issueDesc,
-        timestamp: new Date().toISOString(),
-      });
+      await supabase
+        .from('job_issue_logs')
+        .insert([{
+          job_id: job.id,
+          job_type: job.type,
+          issue_type: issueType,
+          description: issueDesc,
+          reported_by: currentEmployee,
+          timestamp: new Date().toISOString()
+        }]);
+
       alert("Issue reported successfully! Maintenance has been notified.");
       setShowIssue(false);
       setIssueType("");
@@ -146,7 +278,6 @@ function JobCard({ job, onStatusUpdate }: JobCardProps) {
         <div className="flex items-start justify-between gap-3 mb-4">
           <div>
             <div className="flex items-center gap-2 mb-0.5">
-              {/* Job Type Badge */}
               {isSample ? (
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-amber-50 text-amber-700 border border-amber-200">
                   <FlaskConical size={10} /> Sample
@@ -170,7 +301,23 @@ function JobCard({ job, onStatusUpdate }: JobCardProps) {
           </span>
         </div>
 
-        {/* Progress */}
+        {(materialUsed > 0 || materialWaste > 0) && (
+          <div className="bg-slate-50 rounded-lg p-2 mb-3 flex items-center gap-4 text-xs">
+            {materialUsed > 0 && (
+              <span className="flex items-center gap-1">
+                <Package size={12} className="text-green-600" />
+                Used: <span className="font-semibold">{materialUsed} units</span>
+              </span>
+            )}
+            {materialWaste > 0 && (
+              <span className="flex items-center gap-1">
+                <Trash2 size={12} className="text-red-500" />
+                Waste: <span className="font-semibold text-red-600">{materialWaste} units</span>
+              </span>
+            )}
+          </div>
+        )}
+
         <div className="mb-4">
           <div className="flex items-center justify-between mb-1.5">
             <span className="text-xs text-slate-500">Progress</span>
@@ -184,7 +331,6 @@ function JobCard({ job, onStatusUpdate }: JobCardProps) {
           </div>
         </div>
 
-        {/* Details Grid */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
           <div className="bg-slate-50 rounded-lg p-2.5">
             <p className="text-slate-400 text-xs capitalize mb-0.5">Job ID</p>
@@ -204,13 +350,11 @@ function JobCard({ job, onStatusUpdate }: JobCardProps) {
           </div>
         </div>
 
-        {/* Time */}
         <div className="flex items-center gap-4 text-xs text-slate-500 mb-4">
           <span className="flex items-center gap-1"><Clock size={11} /> Created: <span className="text-slate-700" style={{ fontWeight: 500 }}>{new Date(job.createdDate).toLocaleDateString()}</span></span>
           <span className="flex items-center gap-1"><Clock size={11} /> Due by: <span className="text-slate-700" style={{ fontWeight: 500 }}>{new Date(job.dueDate).toLocaleDateString()}</span></span>
         </div>
 
-        {/* Controls */}
         {showIssue ? (
           <div className="border border-red-200 rounded-xl p-4 bg-red-50">
             <div className="flex items-center justify-between mb-3">
@@ -251,12 +395,119 @@ function JobCard({ job, onStatusUpdate }: JobCardProps) {
               </button>
             </div>
           </div>
+        ) : showMaterialModal ? (
+          <div className="border border-green-200 rounded-xl p-4 bg-green-50">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-green-700 text-xs" style={{ fontWeight: 600 }}>Record Material Usage</p>
+              <button onClick={() => setShowMaterialModal(false)} disabled={updating}>
+                <X size={14} className="text-green-400" />
+              </button>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs text-green-700 mb-1" style={{ fontWeight: 500 }}>Material</label>
+                <select
+                  value={selectedInventoryItem}
+                  onChange={(e) => setSelectedInventoryItem(e.target.value)}
+                  className="w-full text-xs border border-green-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-green-500/20"
+                >
+                  <option value="">Select material...</option>
+                  {availableInventory.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.item} ({item.current} {item.unit} available)
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-green-700 mb-1" style={{ fontWeight: 500 }}>Quantity Used</label>
+                  <input
+                    type="number"
+                    value={materialQuantity}
+                    onChange={(e) => setMaterialQuantity(parseFloat(e.target.value) || 0)}
+                    className="w-full text-xs border border-green-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-green-500/20"
+                    placeholder="0"
+                    min="0"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-green-700 mb-1" style={{ fontWeight: 500 }}>Waste</label>
+                  <input
+                    type="number"
+                    value={wasteQuantity}
+                    onChange={(e) => setWasteQuantity(parseFloat(e.target.value) || 0)}
+                    className="w-full text-xs border border-green-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-green-500/20"
+                    placeholder="0"
+                    min="0"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs text-green-700 mb-1" style={{ fontWeight: 500 }}>Notes</label>
+                <input
+                  type="text"
+                  value={materialNote}
+                  onChange={(e) => setMaterialNote(e.target.value)}
+                  className="w-full text-xs border border-green-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-green-500/20"
+                  placeholder="Optional notes..."
+                />
+              </div>
+              <button
+                onClick={handleSubmitMaterialUsage}
+                disabled={updating}
+                className="w-full text-xs text-white bg-green-600 hover:bg-green-700 rounded-lg py-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{ fontWeight: 500 }}
+              >
+                {updating ? "Recording..." : "Record Usage"}
+              </button>
+            </div>
+          </div>
+        ) : showPauseModal ? (
+          <div className="border border-amber-200 rounded-xl p-4 bg-amber-50">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-amber-700 text-xs" style={{ fontWeight: 600 }}>Pause Job</p>
+              <button onClick={() => setShowPauseModal(false)} disabled={updating}>
+                <X size={14} className="text-amber-400" />
+              </button>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs text-amber-700 mb-1" style={{ fontWeight: 500 }}>Pause Reason</label>
+                <select
+                  value={pauseReason}
+                  onChange={(e) => setPauseReason(e.target.value)}
+                  className="w-full text-xs border border-amber-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                >
+                  <option value="">Select reason...</option>
+                  {pauseReasons.map((r) => <option key={r}>{r}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-amber-700 mb-1" style={{ fontWeight: 500 }}>Additional Notes</label>
+                <textarea
+                  value={pauseNote}
+                  onChange={(e) => setPauseNote(e.target.value)}
+                  className="w-full text-xs border border-amber-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500/20 resize-none"
+                  rows={2}
+                  placeholder="Optional notes..."
+                />
+              </div>
+              <button
+                onClick={handlePauseWork}
+                disabled={updating}
+                className="w-full text-xs text-white bg-amber-600 hover:bg-amber-700 rounded-lg py-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{ fontWeight: 500 }}
+              >
+                {updating ? "Pausing..." : "Confirm Pause"}
+              </button>
+            </div>
+          </div>
         ) : (
-          <div className="flex gap-2">
-            {/* Start/Pause Button */}
+          <div className="flex flex-wrap gap-2">
             {(job.status === "Pending" || job.status === "In Progress") && (
               <button
-                onClick={running ? handlePauseWork : handleStartWork}
+                onClick={running ? () => setShowPauseModal(true) : handleStartWork}
                 disabled={updating}
                 className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-xs text-white transition-colors ${running ? "bg-amber-500 hover:bg-amber-600" : "bg-indigo-600 hover:bg-indigo-700"} disabled:opacity-50 disabled:cursor-not-allowed`}
                 style={{ fontWeight: 600 }}
@@ -271,7 +522,17 @@ function JobCard({ job, onStatusUpdate }: JobCardProps) {
               </button>
             )}
 
-            {/* Issue Button */}
+            {running && (
+              <button
+                onClick={() => setShowMaterialModal(true)}
+                disabled={updating}
+                className="px-3 py-2 rounded-lg text-xs text-green-600 border border-green-200 hover:bg-green-50 transition-colors flex items-center gap-1"
+                style={{ fontWeight: 500 }}
+              >
+                <Package size={13} /> Material
+              </button>
+            )}
+
             {job.status !== "Completed" && job.status !== "Dispatched" && job.status !== "Approved" && job.status !== "Production Created" && (
               <button
                 onClick={() => setShowIssue(true)}
@@ -283,7 +544,6 @@ function JobCard({ job, onStatusUpdate }: JobCardProps) {
               </button>
             )}
 
-            {/* Complete Button - Different behavior for sample vs production */}
             {progress === 100 && job.status !== "Completed" && job.status !== "Approved" && job.status !== "Production Created" && (
               <button
                 onClick={handleMarkComplete}
@@ -301,7 +561,6 @@ function JobCard({ job, onStatusUpdate }: JobCardProps) {
               </button>
             )}
 
-            {/* Status message for sample awaiting approval */}
             {isSample && job.status === "Awaiting Approval" && (
               <div className="flex-1 text-center py-2 px-3 rounded-lg text-xs bg-yellow-50 text-yellow-700 border border-yellow-200">
                 ⏳ Sent to Supervisor
@@ -316,29 +575,50 @@ function JobCard({ job, onStatusUpdate }: JobCardProps) {
 
 export function MachineOperator() {
   const [assignedJobs, setAssignedJobs] = useState<AssignedJob[]>([]);
+  const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [operatorName, setOperatorName] = useState("Loading...");
   const [operatorMachine, setOperatorMachine] = useState("Loading...");
   const [shift, setShift] = useState("Morning Shift");
+  const [currentEmployee, setCurrentEmployee] = useState("");
+
+  const loadInventory = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('inventory')
+        .select('*')
+        .order('item');
+
+      if (error) throw error;
+      if (data) {
+        setInventoryItems(data);
+      }
+    } catch (err) {
+      console.error("Failed to load inventory:", err);
+    }
+  };
 
   const loadJobs = async () => {
     try {
       setLoading(true);
       setError(null);
 
-      // Fetch production jobs
       const productionData = await api.getProductionJobs();
-
-      // Fetch sample jobs
       const sampleData = await api.getSampleJobs();
 
-      // Combine and map to AssignedJob
+      // Get current employee
+      const emp = await api.getCurrentEmployee();
+      if (emp) {
+        setCurrentEmployee(emp.full_name || "");
+        setOperatorName(emp.full_name || "Admin User");
+      }
+
+      await loadInventory();
+
       const combined: AssignedJob[] = [];
 
-      // Add production jobs
       productionData.forEach(job => {
-        // Only show jobs that are not completed/dispatched
         if (job.status !== "Completed" && job.status !== "Dispatched") {
           combined.push({
             id: job.id,
@@ -356,13 +636,13 @@ export function MachineOperator() {
             value: job.value,
             productionJobId: job.id,
             quotationId: job.quotationId,
+            materialUsed: 0,
+            materialWaste: 0,
           });
         }
       });
 
-      // Add sample jobs
       sampleData.forEach(job => {
-        // Only show pending, in progress, and awaiting approval jobs
         if (job.status === "Pending" || job.status === "In Progress" || job.status === "Awaiting Approval") {
           combined.push({
             id: job.id,
@@ -371,28 +651,25 @@ export function MachineOperator() {
             customer: job.customer,
             quantity: job.sampleQuantity,
             assignedTo: job.assignedTo,
-            machine: 'Sample', // Sample jobs don't have machine assigned yet
+            machine: 'Sample',
             priority: 'Medium',
             status: job.status,
-            progress: 0, // Sample jobs track completion differently
+            progress: 0,
             dueDate: job.dueDate,
             createdDate: job.createdDate,
             value: job.sampleCost,
             sampleJobId: job.id,
             quotationId: job.quotationId,
+            materialUsed: 0,
+            materialWaste: 0,
           });
         }
       });
 
       setAssignedJobs(combined);
 
-      // Set operator info
       if (combined.length > 0 && combined[0].assignedTo) {
-        setOperatorName(combined[0].assignedTo);
         setOperatorMachine(combined[0].machine || 'Sample');
-      } else {
-        setOperatorName("Admin User");
-        setOperatorMachine("ertger");
       }
     } catch (err) {
       console.error("Failed to load jobs:", err);
@@ -406,7 +683,6 @@ export function MachineOperator() {
     loadJobs();
   }, []);
 
-  // Calculate stats
   const totalJobs = assignedJobs.length;
   const runningJobs = assignedJobs.filter(j => j.status === "In Progress").length;
   const pendingJobs = assignedJobs.filter(j => j.status === "Pending").length;
@@ -414,14 +690,10 @@ export function MachineOperator() {
   const totalUnits = assignedJobs.reduce((sum, j) => sum + j.quantity, 0);
   const completedUnits = assignedJobs.reduce((sum, j) => sum + (j.quantity * (j.progress / 100)), 0);
 
-  // Calculate average progress
   const avgProgress = assignedJobs.length > 0
     ? Math.round(assignedJobs.reduce((sum, j) => sum + j.progress, 0) / assignedJobs.length)
     : 0;
 
-  const issuesReported = 0;
-
-  // Separate sample and production jobs for display
   const sampleJobs = assignedJobs.filter(j => j.type === 'sample');
   const productionJobs = assignedJobs.filter(j => j.type === 'production');
 
@@ -473,7 +745,6 @@ export function MachineOperator() {
         </div>
       </div>
 
-      {/* Machine Status */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
           { label: "My Jobs Today", value: totalJobs, sub: `${runningJobs} running, ${pendingJobs} pending`, color: "text-indigo-600 bg-indigo-50" },
@@ -492,7 +763,6 @@ export function MachineOperator() {
         ))}
       </div>
 
-      {/* Sample Jobs Section */}
       {sampleJobs.length > 0 && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
@@ -503,13 +773,19 @@ export function MachineOperator() {
           </div>
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
             {sampleJobs.map((job) => (
-              <JobCard key={job.id} job={job} onStatusUpdate={loadJobs} />
+              <JobCard
+                key={job.id}
+                job={job}
+                onStatusUpdate={loadJobs}
+                inventoryItems={inventoryItems}
+                onInventoryUpdate={loadInventory}
+                currentEmployee={currentEmployee}
+              />
             ))}
           </div>
         </div>
       )}
 
-      {/* Production Jobs Section */}
       {productionJobs.length > 0 && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
@@ -520,13 +796,19 @@ export function MachineOperator() {
           </div>
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
             {productionJobs.map((job) => (
-              <JobCard key={job.id} job={job} onStatusUpdate={loadJobs} />
+              <JobCard
+                key={job.id}
+                job={job}
+                onStatusUpdate={loadJobs}
+                inventoryItems={inventoryItems}
+                onInventoryUpdate={loadInventory}
+                currentEmployee={currentEmployee}
+              />
             ))}
           </div>
         </div>
       )}
 
-      {/* No Jobs Message */}
       {sampleJobs.length === 0 && productionJobs.length === 0 && (
         <div className="text-center py-12 bg-card border border-border rounded-xl">
           <div className="text-slate-400 mb-2">
