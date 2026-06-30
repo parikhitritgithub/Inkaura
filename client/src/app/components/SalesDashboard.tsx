@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -7,7 +8,7 @@ import {
 } from "recharts";
 import {
   Users, Clock, AlertCircle, FileText,
-  CheckCircle, Briefcase, Activity, Download,
+  CheckCircle, Briefcase, Download,
   Package, Truck, ShieldCheck, IndianRupee,
   RefreshCw, ArrowRight, Wallet, Receipt,
 } from "lucide-react";
@@ -114,6 +115,8 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 
 // ─── Main Component ───────────────────────────────────────────
 export function SalesDashboard() {
+  const navigate = useNavigate();
+
   const [currentEmployee, setCurrentEmployee] = useState<any>(null);
   const [empId,           setEmpId]           = useState<number | null>(null);
   const [isAdmin,         setIsAdmin]         = useState(false);
@@ -171,16 +174,11 @@ export function SalesDashboard() {
     return empId;
   }, [isAdmin, selectedExecId, empId]);
 
-  // ── Load KPIs ─────────────────────────────────────────────
-  // Automatically refreshes the materialized view first
-  // so users never need to run SQL manually
+  // ── Load KPIs (auto-refreshes materialized view) ──────────
   const loadKPIs = useCallback(async () => {
     setLoadingKPIs(true);
     try {
-      // ── Auto-refresh materialized view ──────────────────
-      // This keeps data fresh without any manual SQL
       await supabase.rpc('refresh_dashboard_mvs');
-      // ────────────────────────────────────────────────────
 
       const targetId = getTargetEmpId();
       const { data, error } = await supabase.rpc(
@@ -189,7 +187,6 @@ export function SalesDashboard() {
       );
 
       if (error) {
-        // Fallback: query materialized view directly
         const { data: mvData } = await supabase
           .from('sales_dashboard_summary')
           .select('*');
@@ -263,7 +260,7 @@ export function SalesDashboard() {
     }
   }, [getTargetEmpId, isAdmin]);
 
-  // ── Trigger loads when ready ─────────────────────────────────
+  // ── Trigger loads ────────────────────────────────────────────
   useEffect(() => {
     if (!initialized) return;
     if (isAdmin || empId !== null) {
@@ -277,7 +274,7 @@ export function SalesDashboard() {
     loadCharts();
   };
 
-  // ── Derived values ───────────────────────────────────────────
+  // ── Derived ──────────────────────────────────────────────────
   const conversionRate = kpis.total_quotations
     ? ((kpis.approved_quotations || 0) / kpis.total_quotations * 100).toFixed(1)
     : '0.0';
@@ -288,6 +285,65 @@ export function SalesDashboard() {
     ...item,
     fill: STATUS_COLORS[item.name] || '#94a3b8',
   }));
+
+  // ── Action Center items with navigation ──────────────────────
+  const actionItems = [
+    {
+      label: 'Overdue Invoices',
+      desc:  `${kpis.overdue_invoices_count || 0} invoices past due date`,
+      value: fmt(kpis.overdue_amount),
+      show:  (kpis.overdue_invoices_count || 0) > 0,
+      nav:   '/finance',
+      bg:    'bg-red-50 border-red-100 hover:bg-red-100',
+      txt:   'text-red-800',
+      sub:   'text-red-600',
+      arrow: 'text-red-400',
+    },
+    {
+      label: 'Pending Quotations',
+      desc:  `${kpis.sent_quotations || 0} quotes awaiting customer approval`,
+      value: `${kpis.sent_quotations || 0}`,
+      show:  true,
+      nav:   '/quotations',
+      bg:    'bg-amber-50 border-amber-100 hover:bg-amber-100',
+      txt:   'text-amber-800',
+      sub:   'text-amber-600',
+      arrow: 'text-amber-400',
+    },
+    {
+      label: 'Draft Quotations',
+      desc:  `${kpis.draft_quotations || 0} quotes not yet sent to customer`,
+      value: `${kpis.draft_quotations || 0}`,
+      show:  true,
+      nav:   '/quotations',
+      bg:    'bg-slate-50 border-slate-100 hover:bg-slate-100',
+      txt:   'text-slate-800',
+      sub:   'text-slate-500',
+      arrow: 'text-slate-400',
+    },
+    {
+      label: 'Invoice Outstanding',
+      desc:  'Total invoice balance not yet collected',
+      value: fmt(kpis.outstanding_amount),
+      show:  true,
+      nav:   '/finance',
+      bg:    'bg-orange-50 border-orange-100 hover:bg-orange-100',
+      txt:   'text-orange-800',
+      sub:   'text-orange-600',
+      arrow: 'text-orange-400',
+    },
+    {
+      label: 'Advance Collected',
+      desc:  'Advance payments at quotation stage',
+      value: fmt(kpis.advance_collected),
+      show:  (kpis.advance_collected || 0) > 0,
+      nav:   '/finance',
+      bg:    'bg-blue-50 border-blue-100 hover:bg-blue-100',
+      txt:   'text-blue-800',
+      sub:   'text-blue-600',
+      arrow: 'text-blue-400',
+    },
+  ].filter(item => item.show);
 
   // ─── Render ───────────────────────────────────────────────
   return (
@@ -354,7 +410,6 @@ export function SalesDashboard() {
         <div className="h-32 flex items-center justify-center"><Spinner /></div>
       ) : (
         <>
-          {/* Row 1: Revenue & Collection */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <KPICard
               title="Invoice Revenue"
@@ -390,7 +445,6 @@ export function SalesDashboard() {
             />
           </div>
 
-          {/* Row 2: Business metrics */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <KPICard
               title="Outstanding"
@@ -450,7 +504,10 @@ export function SalesDashboard() {
                   <>
                     <div
                       className="h-full bg-blue-500 transition-all"
-                      style={{ width: `${advPct}%`, borderRadius: invPct > 0 ? '9999px 0 0 9999px' : '9999px' }}
+                      style={{
+                        width:        `${advPct}%`,
+                        borderRadius: invPct > 0 ? '9999px 0 0 9999px' : '9999px',
+                      }}
                     />
                     {invPct > 0 && (
                       <div
@@ -627,7 +684,11 @@ export function SalesDashboard() {
                 const maxRev = topCustomers[0]?.revenue || 1;
                 const pct    = Math.max((c.revenue / maxRev) * 100, 2);
                 return (
-                  <div key={i}>
+                  <div
+                    key={i}
+                    className="cursor-pointer hover:opacity-80 transition-opacity"
+                    onClick={() => navigate('/customers')}
+                  >
                     <div className="flex items-center justify-between mb-1">
                       <div className="flex items-center gap-2">
                         <span className="text-xs font-bold text-indigo-600">#{i + 1}</span>
@@ -706,11 +767,11 @@ export function SalesDashboard() {
           {loadingCharts ? <SectionLoader /> : (
             <div className="space-y-3">
               {[
-                { label: 'Pending',     key: 'pending',     color: 'bg-slate-400',  pct_color: '#94a3b8' },
-                { label: 'In Progress', key: 'in_progress', color: 'bg-indigo-500', pct_color: '#6366f1' },
-                { label: 'QC Pending',  key: 'qc_pending',  color: 'bg-amber-500',  pct_color: '#f59e0b' },
-                { label: 'Completed',   key: 'completed',   color: 'bg-green-500',  pct_color: '#10b981' },
-                { label: 'Dispatched',  key: 'dispatched',  color: 'bg-purple-500', pct_color: '#8b5cf6' },
+                { label: 'Pending',     key: 'pending',     color: 'bg-slate-400',  pct_color: '#94a3b8', nav: '/production-jobs' },
+                { label: 'In Progress', key: 'in_progress', color: 'bg-indigo-500', pct_color: '#6366f1', nav: '/production-jobs' },
+                { label: 'QC Pending',  key: 'qc_pending',  color: 'bg-amber-500',  pct_color: '#f59e0b', nav: '/qc'             },
+                { label: 'Completed',   key: 'completed',   color: 'bg-green-500',  pct_color: '#10b981', nav: '/production-jobs' },
+                { label: 'Dispatched',  key: 'dispatched',  color: 'bg-purple-500', pct_color: '#8b5cf6', nav: '/dispatch'       },
               ].map((item) => {
                 const val   = orderStatus[item.key] || 0;
                 const total = Object.values(orderStatus).reduce(
@@ -718,7 +779,11 @@ export function SalesDashboard() {
                 ) as number;
                 const pct = total > 0 ? (val / total) * 100 : 0;
                 return (
-                  <div key={item.key}>
+                  <div
+                    key={item.key}
+                    className="cursor-pointer hover:opacity-80 transition-opacity"
+                    onClick={() => navigate(item.nav)}
+                  >
                     <div className="flex items-center justify-between mb-1">
                       <div className="flex items-center gap-2">
                         <div className={`w-2 h-2 rounded-full ${item.color}`} />
@@ -783,67 +848,18 @@ export function SalesDashboard() {
       {/* ── Action Center + Recent Quotes ───────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
 
+        {/* Action Center — every item now navigates */}
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
           <h3 className="text-slate-900 text-sm font-semibold mb-4 flex items-center gap-2">
             <AlertCircle size={15} className="text-red-500" /> Action Center
           </h3>
           <div className="space-y-2.5">
-            {[
-              {
-                label: 'Overdue Invoices',
-                desc:  `${kpis.overdue_invoices_count || 0} invoices past due date`,
-                value: fmt(kpis.overdue_amount),
-                show:  (kpis.overdue_invoices_count || 0) > 0,
-                bg:    'bg-red-50 border-red-100 hover:bg-red-100',
-                txt:   'text-red-800',
-                sub:   'text-red-600',
-                arrow: 'text-red-400',
-              },
-              {
-                label: 'Pending Quotations',
-                desc:  `${kpis.sent_quotations || 0} quotes awaiting customer approval`,
-                value: `${kpis.sent_quotations || 0}`,
-                show:  true,
-                bg:    'bg-amber-50 border-amber-100 hover:bg-amber-100',
-                txt:   'text-amber-800',
-                sub:   'text-amber-600',
-                arrow: 'text-amber-400',
-              },
-              {
-                label: 'Draft Quotations',
-                desc:  `${kpis.draft_quotations || 0} quotes not yet sent to customer`,
-                value: `${kpis.draft_quotations || 0}`,
-                show:  true,
-                bg:    'bg-slate-50 border-slate-100 hover:bg-slate-100',
-                txt:   'text-slate-800',
-                sub:   'text-slate-500',
-                arrow: 'text-slate-400',
-              },
-              {
-                label: 'Invoice Outstanding',
-                desc:  'Total invoice balance not yet collected',
-                value: fmt(kpis.outstanding_amount),
-                show:  true,
-                bg:    'bg-orange-50 border-orange-100 hover:bg-orange-100',
-                txt:   'text-orange-800',
-                sub:   'text-orange-600',
-                arrow: 'text-orange-400',
-              },
-              {
-                label: 'Advance Collected',
-                desc:  'Advance payments at quotation stage',
-                value: fmt(kpis.advance_collected),
-                show:  (kpis.advance_collected || 0) > 0,
-                bg:    'bg-blue-50 border-blue-100 hover:bg-blue-100',
-                txt:   'text-blue-800',
-                sub:   'text-blue-600',
-                arrow: 'text-blue-400',
-              },
-            ].filter(item => item.show).map((item) => (
+            {actionItems.map((item) => (
               <div
                 key={item.label}
+                onClick={() => navigate(item.nav)}
                 className={`p-3 border rounded-lg flex items-center justify-between
-                  cursor-pointer transition-colors ${item.bg}`}
+                  cursor-pointer transition-all active:scale-[0.98] ${item.bg}`}
               >
                 <div>
                   <p className={`text-xs font-semibold ${item.txt}`}>{item.label}</p>
@@ -858,11 +874,16 @@ export function SalesDashboard() {
           </div>
         </div>
 
-        {/* Recent Quotations */}
+        {/* Recent Quotations — clicking navigates to quotation page */}
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
           <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
             <h3 className="text-slate-900 text-sm font-semibold">Recent Quotations</h3>
-            <span className="text-xs text-slate-400">Last 8</span>
+            <button
+              onClick={() => navigate('/quotations')}
+              className="text-xs text-indigo-600 hover:underline font-medium"
+            >
+              View all
+            </button>
           </div>
           {loadingCharts ? <SectionLoader /> : (
             <div className="divide-y divide-slate-50">
@@ -881,7 +902,9 @@ export function SalesDashboard() {
                   return (
                     <div
                       key={q.quotation_id}
-                      className="flex items-center justify-between px-5 py-3 hover:bg-slate-50 transition-colors"
+                      onClick={() => navigate('/quotations')}
+                      className="flex items-center justify-between px-5 py-3
+                        hover:bg-slate-50 transition-colors cursor-pointer"
                     >
                       <div className="min-w-0">
                         <div className="flex items-center gap-2 mb-0.5 flex-wrap">
@@ -928,7 +951,12 @@ export function SalesDashboard() {
               <ShieldCheck size={15} className="text-indigo-600" />
               Employee Performance
             </h3>
-            <span className="text-xs text-slate-400">All active employees</span>
+            <button
+              onClick={() => navigate('/employees')}
+              className="text-xs text-indigo-600 hover:underline font-medium"
+            >
+              Manage
+            </button>
           </div>
           {loadingCharts ? <SectionLoader /> : (
             <div className="overflow-x-auto">
@@ -956,7 +984,8 @@ export function SalesDashboard() {
                     empPerformance.map((emp: any, i: number) => (
                       <tr
                         key={i}
-                        className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors"
+                        className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors cursor-pointer"
+                        onClick={() => navigate('/employees')}
                       >
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2">
