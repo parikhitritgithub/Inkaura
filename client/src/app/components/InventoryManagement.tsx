@@ -2,7 +2,29 @@ import { useState, useEffect } from "react";
 import { AlertTriangle, Package, Plus, Search, TrendingDown, BarChart2, RefreshCw, Edit, Trash2, Save, X, CheckCircle, XCircle, FileText, Printer, Calendar, Download, TrendingUp, Filter } from "lucide-react";
 import { supabase } from "../server/api";
 
-type Category = "All" | "Paper" | "Ink" | "Plate" | "Consumables";
+type Category = "All" | "Plate & Master" | "Inks & Chemicals" | "Printer Accessories" | "Gum & Glues" | "Rubber Blankets & Lamination Rolls" | "Binding Accessories" | "Engineering Accessories" | "Other";
+
+const INVENTORY_CATEGORIES: Exclude<Category, "All">[] = [
+  "Plate & Master",
+  "Inks & Chemicals",
+  "Printer Accessories",
+  "Gum & Glues",
+  "Rubber Blankets & Lamination Rolls",
+  "Binding Accessories",
+  "Engineering Accessories",
+  "Other",
+];
+
+const CATEGORY_COLORS: Record<string, string> = {
+  "Plate & Master": "bg-sky-50 text-sky-700",
+  "Inks & Chemicals": "bg-purple-50 text-purple-700",
+  "Printer Accessories": "bg-indigo-50 text-indigo-700",
+  "Gum & Glues": "bg-amber-50 text-amber-700",
+  "Rubber Blankets & Lamination Rolls": "bg-emerald-50 text-emerald-700",
+  "Binding Accessories": "bg-rose-50 text-rose-700",
+  "Engineering Accessories": "bg-teal-50 text-teal-700",
+  "Other": "bg-slate-100 text-slate-600",
+};
 
 interface InventoryItem {
   id: number;
@@ -14,6 +36,11 @@ interface InventoryItem {
   unit: string;
   unitcost: number;
   supplier: string;
+  opening_balance: number;
+  received: number;
+  issued: number;
+  requirement: number;
+  remarks: string;
   lastorder?: string;
   created_at?: string;
   updated_at?: string;
@@ -58,7 +85,7 @@ export function InventoryManagement() {
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const [formData, setFormData] = useState({
     item: "",
-    category: "Paper" as Category,
+    category: "Plate & Master" as Category,
     current: 0,
     min: 0,
     max: 0,
@@ -66,6 +93,11 @@ export function InventoryManagement() {
     unitcost: 0,
     supplier: "",
     lastorder: "",
+    opening_balance: 0,
+    received: 0,
+    issued: 0,
+    requirement: 0,
+    remarks: "",
   });
   const [submitting, setSubmitting] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
@@ -246,16 +278,24 @@ export function InventoryManagement() {
     try {
       setSubmitting(true);
 
+      const total = formData.opening_balance + formData.received;
+      const closing_balance = total - formData.issued;
+
       const payload = {
         item: formData.item.trim(),
         category: formData.category,
-        current: formData.current,
+        current: closing_balance,
         min: formData.min,
         max: formData.max,
         unit: formData.unit.trim(),
         unitcost: formData.unitcost,
         supplier: formData.supplier?.trim() || null,
         lastorder: formData.lastorder || null,
+        opening_balance: formData.opening_balance,
+        received: formData.received,
+        issued: formData.issued,
+        requirement: formData.requirement,
+        remarks: formData.remarks?.trim() || null,
         updated_at: new Date().toISOString(),
       };
 
@@ -319,6 +359,11 @@ export function InventoryManagement() {
       unitcost: item.unitcost,
       supplier: item.supplier || "",
       lastorder: item.lastorder || "",
+      opening_balance: item.opening_balance || 0,
+      received: item.received || 0,
+      issued: item.issued || 0,
+      requirement: item.requirement || 0,
+      remarks: item.remarks || "",
     });
     setShowAddModal(true);
   };
@@ -326,7 +371,7 @@ export function InventoryManagement() {
   const resetForm = () => {
     setFormData({
       item: "",
-      category: "Paper",
+      category: "Plate & Master",
       current: 0,
       min: 0,
       max: 0,
@@ -334,6 +379,11 @@ export function InventoryManagement() {
       unitcost: 0,
       supplier: "",
       lastorder: "",
+      opening_balance: 0,
+      received: 0,
+      issued: 0,
+      requirement: 0,
+      remarks: "",
     });
     setEditingItem(null);
     setShowAddModal(false);
@@ -348,18 +398,26 @@ export function InventoryManagement() {
 
   // Export to CSV
   const handleExportCSV = () => {
-    const headers = ['Item', 'Category', 'Current Stock', 'Min Stock', 'Max Stock', 'Unit', 'Unit Cost', 'Total Value', 'Supplier'];
-    const rows = filtered.map(item => [
-      item.item,
-      item.category,
-      item.current,
-      item.min,
-      item.max,
-      item.unit,
-      item.unitcost,
-      (item.current * item.unitcost).toFixed(2),
-      item.supplier
-    ]);
+    const headers = ['Item', 'Category', 'Unit', 'Op/Balance', 'Received', 'Total', 'Issued', 'C/L Balance', 'Requirement', 'Unit Cost', 'Supplier', 'Remarks'];
+    const rows = filtered.map(item => {
+      const opBal = item.opening_balance || 0;
+      const recv = item.received || 0;
+      const iss = item.issued || 0;
+      return [
+        item.item,
+        item.category,
+        item.unit,
+        opBal,
+        recv,
+        opBal + recv,
+        iss,
+        (opBal + recv) - iss,
+        item.requirement || 0,
+        item.unitcost,
+        item.supplier,
+        item.remarks || ''
+      ];
+    });
 
     let csv = headers.join(',') + '\n';
     rows.forEach(row => {
@@ -475,39 +533,64 @@ export function InventoryManagement() {
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Category <span className="text-red-500">*</span></label>
                   <select value={formData.category} onChange={(e) => setFormData({ ...formData, category: e.target.value as Category })} className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400" required>
-                    <option value="Paper">Paper</option>
-                    <option value="Ink">Ink</option>
-                    <option value="Plate">Plate</option>
-                    <option value="Consumables">Consumables</option>
+                    {INVENTORY_CATEGORIES.map((cat) => (
+                      <option key={cat} value={cat}>{cat}</option>
+                    ))}
                   </select>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Unit <span className="text-red-500">*</span></label>
                   <input type="text" value={formData.unit} onChange={(e) => setFormData({ ...formData, unit: e.target.value })} placeholder="e.g., reams, kg, pcs" className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400" required />
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Current Stock <span className="text-red-500">*</span></label>
-                  <input type="number" value={formData.current} onChange={(e) => setFormData({ ...formData, current: parseFloat(e.target.value) || 0 })} placeholder="0" className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400" required min="0" />
+
+                {/* Stock Register Fields */}
+                <div className="md:col-span-2 mt-2">
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3 border-b border-slate-100 pb-2">Stock Register</p>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Minimum Stock <span className="text-red-500">*</span></label>
-                  <input type="number" value={formData.min} onChange={(e) => setFormData({ ...formData, min: parseFloat(e.target.value) || 0 })} placeholder="0" className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400" required min="0" />
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Opening Balance</label>
+                  <input type="number" value={formData.opening_balance} onChange={(e) => setFormData({ ...formData, opening_balance: parseFloat(e.target.value) || 0 })} placeholder="0" className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400" min="0" />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Maximum Stock</label>
-                  <input type="number" value={formData.max} onChange={(e) => setFormData({ ...formData, max: parseFloat(e.target.value) || 0 })} placeholder="0" className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400" min="0" />
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Received</label>
+                  <input type="number" value={formData.received} onChange={(e) => setFormData({ ...formData, received: parseFloat(e.target.value) || 0 })} placeholder="0" className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400" min="0" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Issued</label>
+                  <input type="number" value={formData.issued} onChange={(e) => setFormData({ ...formData, issued: parseFloat(e.target.value) || 0 })} placeholder="0" className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400" min="0" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Requirement</label>
+                  <input type="number" value={formData.requirement} onChange={(e) => setFormData({ ...formData, requirement: parseFloat(e.target.value) || 0 })} placeholder="0" className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400" min="0" />
+                </div>
+
+                {/* Computed Values Display */}
+                <div className="md:col-span-2 bg-slate-50 rounded-lg p-3 flex gap-6">
+                  <div>
+                    <p className="text-xs text-slate-500">Total (Op.Bal + Received)</p>
+                    <p className="text-sm font-bold text-slate-800">{formData.opening_balance + formData.received} {formData.unit}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500">Closing Balance (Total - Issued)</p>
+                    <p className="text-sm font-bold text-indigo-600">{(formData.opening_balance + formData.received) - formData.issued} {formData.unit}</p>
+                  </div>
+                </div>
+
+                {/* Other Details */}
+                <div className="md:col-span-2 mt-2">
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3 border-b border-slate-100 pb-2">Other Details</p>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Unit Cost (₹)</label>
                   <input type="number" value={formData.unitcost} onChange={(e) => setFormData({ ...formData, unitcost: parseFloat(e.target.value) || 0 })} placeholder="0" className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400" min="0" />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Last Order Date</label>
-                  <input type="date" value={formData.lastorder} onChange={(e) => setFormData({ ...formData, lastorder: e.target.value })} className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400" />
-                </div>
-                <div className="md:col-span-2">
                   <label className="block text-sm font-medium text-slate-700 mb-1">Supplier</label>
                   <input type="text" value={formData.supplier} onChange={(e) => setFormData({ ...formData, supplier: e.target.value })} placeholder="e.g., ITC Papercrafts" className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400" />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Remarks</label>
+                  <textarea value={formData.remarks} onChange={(e) => setFormData({ ...formData, remarks: e.target.value })} placeholder="Any additional notes..." rows={2} className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 resize-none" />
                 </div>
               </div>
 
@@ -768,18 +851,17 @@ export function InventoryManagement() {
               className="pl-8 pr-3 py-1.5 text-xs border border-slate-200 rounded-lg w-full focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
             />
           </div>
-          <div className="flex border border-slate-200 rounded-lg overflow-hidden">
-            {(["All", "Paper", "Ink", "Plate", "Consumables"] as Category[]).map((c) => (
-              <button
-                key={c}
-                onClick={() => setCategory(c)}
-                className={`px-3 py-1.5 text-xs transition-colors ${category === c ? "bg-indigo-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}
-                style={{ fontWeight: category === c ? 500 : 400 }}
-              >
-                {c}
-              </button>
+          <select
+            value={category}
+            onChange={(e) => setCategory(e.target.value as Category)}
+            className="px-3 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 bg-white min-w-[180px]"
+            style={{ fontWeight: 500 }}
+          >
+            <option value="All">All Categories</option>
+            {INVENTORY_CATEGORIES.map((c) => (
+              <option key={c} value={c}>{c}</option>
             ))}
-          </div>
+          </select>
           <span className="text-xs text-slate-400 ml-auto">
             Showing {filtered.length} items
           </span>
@@ -789,50 +871,38 @@ export function InventoryManagement() {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-slate-50 border-b border-border">
-                {["Item", "Category", "Current Stock", "Min / Max", "Stock Level", "Unit Cost", "Total Value", "Supplier", "Status", "Actions"].map((h) => (
+                {["Item", "Category", "Op/Blnce", "Received", "Total", "Issue", "C/L Bal", "Requirement", "Remarks", "Actions"].map((h) => (
                   <th key={h} className="text-left text-xs text-slate-500 px-4 py-2.5 whitespace-nowrap" style={{ fontWeight: 500 }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {currentItems.map((item) => {
-                const status = getStockStatus(item.current, item.min);
-                const fillPct = Math.min((item.current / item.max) * 100, 100);
+                const opBal = item.opening_balance || 0;
+                const recv = item.received || 0;
+                const iss = item.issued || 0;
+                const total = opBal + recv;
+                const closingBal = total - iss;
                 return (
                   <tr key={item.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
                     <td className="px-4 py-3">
                       <p className="text-slate-800 text-xs" style={{ fontWeight: 500 }}>{item.item}</p>
-                      <p className="text-slate-400 text-xs">#{item.id}</p>
+                      <p className="text-slate-400 text-xs">#{item.id} · {item.unit}</p>
                     </td>
                     <td className="px-4 py-3">
-                      <span className={`text-xs px-2 py-0.5 rounded ${item.category === "Paper" ? "bg-indigo-50 text-indigo-700" :
-                        item.category === "Ink" ? "bg-purple-50 text-purple-700" :
-                          item.category === "Plate" ? "bg-sky-50 text-sky-700" :
-                            "bg-slate-100 text-slate-600"
-                        }`} style={{ fontWeight: 500 }}>{item.category}</span>
+                      <span className={`text-xs px-2 py-0.5 rounded ${CATEGORY_COLORS[item.category] || "bg-slate-100 text-slate-600"}`} style={{ fontWeight: 500 }}>{item.category}</span>
                     </td>
-                    <td className="px-4 py-3 text-slate-800 text-xs" style={{ fontWeight: 700 }}>
-                      {item.current} {item.unit}
-                    </td>
-                    <td className="px-4 py-3 text-slate-500 text-xs">{item.min} / {item.max} {item.unit}</td>
+                    <td className="px-4 py-3 text-slate-700 text-xs" style={{ fontWeight: 600 }}>{opBal}</td>
+                    <td className="px-4 py-3 text-green-600 text-xs" style={{ fontWeight: 600 }}>{recv > 0 ? `+${recv}` : recv}</td>
+                    <td className="px-4 py-3 text-slate-800 text-xs" style={{ fontWeight: 700 }}>{total}</td>
+                    <td className="px-4 py-3 text-red-500 text-xs" style={{ fontWeight: 600 }}>{iss > 0 ? `-${iss}` : iss}</td>
                     <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <div className="w-20 h-1.5 rounded-full bg-slate-100 overflow-hidden">
-                          <div className={`h-full rounded-full ${status.barColor}`} style={{ width: `${fillPct}%` }} />
-                        </div>
-                        <span className="text-xs text-slate-500">{Math.round(fillPct)}%</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-slate-600 text-xs">₹{item.unitcost.toLocaleString()}</td>
-                    <td className="px-4 py-3 text-slate-800 text-xs" style={{ fontWeight: 600 }}>
-                      ₹{(item.current * item.unitcost).toLocaleString()}
-                    </td>
-                    <td className="px-4 py-3 text-slate-500 text-xs">{item.supplier || '-'}</td>
-                    <td className="px-4 py-3">
-                      <span className={`inline-flex px-2 py-0.5 rounded border text-xs ${status.color}`} style={{ fontWeight: 500 }}>
-                        {status.label}
+                      <span className={`text-xs font-bold px-2 py-0.5 rounded ${closingBal <= 0 ? 'bg-red-50 text-red-700' : closingBal < (item.requirement || 0) ? 'bg-amber-50 text-amber-700' : 'bg-green-50 text-green-700'}`}>
+                        {closingBal}
                       </span>
                     </td>
+                    <td className="px-4 py-3 text-indigo-600 text-xs" style={{ fontWeight: 600 }}>{item.requirement || 0}</td>
+                    <td className="px-4 py-3 text-slate-500 text-xs max-w-[120px] truncate" title={item.remarks || '-'}>{item.remarks || '-'}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1">
                         <button onClick={() => handleEdit(item)} className="p-1 text-slate-400 hover:text-indigo-600 rounded hover:bg-indigo-50 transition-colors" title="Edit">
