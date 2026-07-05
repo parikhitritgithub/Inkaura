@@ -691,7 +691,7 @@ CREATE POLICY "packaging_details_delete" ON packaging_details FOR DELETE TO auth
 -- 22. INVOICES
 CREATE TABLE IF NOT EXISTS invoices (
     invoice_id VARCHAR(20) PRIMARY KEY,
-    quotation_id VARCHAR(20) NOT NULL REFERENCES quotations(quotation_id),
+    quotation_id VARCHAR(20) NULL REFERENCES quotations(quotation_id),
     production_order_id VARCHAR(20) REFERENCES production_orders(production_order_id),
     invoice_number VARCHAR(50) UNIQUE NOT NULL,
     invoice_date DATE NOT NULL,
