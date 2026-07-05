@@ -76,19 +76,30 @@ export function FinanceDashboard() {
   });
   const [fallbackQuotationId, setFallbackQuotationId] = useState("");
 
-  /* ---- Create Sundry Expense Modal State ---- */
-  const [showSundryExpense, setShowSundryExpense] = useState(false);
-  const [creatingSundry, setCreatingSundry] = useState(false);
-  const [sundryForm, setSundryForm] = useState({
-    customerId: "",
-    expenseDate: new Date().toISOString().split("T")[0],
+  /* ---- Expense Rows (inside Create Invoice modal) ---- */
+  interface ExpenseRow {
+    expenseCategory: string;
+    amount: number;
+    paymentMethod: string;
+    paidBy: string;
+    paidByName: string;
+    expenseDate: string;
+    description: string;
+    isApproved: boolean;
+  }
+  const emptyExpenseRow: ExpenseRow = {
     expenseCategory: "",
     amount: 0,
     paymentMethod: "",
     paidBy: "",
+    paidByName: "",
+    expenseDate: new Date().toISOString().split("T")[0],
     description: "",
     isApproved: false,
-  });
+  };
+  const [expenseRows, setExpenseRows] = useState<ExpenseRow[]>([]);
+  const [showExpenseEntry, setShowExpenseEntry] = useState(false);
+  const [currentExpense, setCurrentExpense] = useState<ExpenseRow>({ ...emptyExpenseRow });
 
   /* ---- Fetch production jobs when customer changes (for invoice modal) ---- */
   useEffect(() => {
@@ -135,6 +146,9 @@ export function FinanceDashboard() {
         productionJobId: jobId,
         quotationId: job.quotation_id || "",
         amount: job.quotations?.total_payment || 0,
+        issueDate: job.delivery_date
+          ? new Date(job.delivery_date).toISOString().split("T")[0]
+          : prev.issueDate,
         dueDate: job.delivery_date
           ? new Date(new Date(job.delivery_date).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]
           : prev.dueDate,
@@ -223,128 +237,120 @@ export function FinanceDashboard() {
   /* --------------------------------------------------------------
    *  CREATE INVOICE MODAL HANDLERS
    * -------------------------------------------------------------- */
+  /* ---- Expense Row Helpers ---- */
+  const addExpenseRow = () => {
+    if (!currentExpense.expenseCategory) { alert("Please enter an expense category."); return; }
+    if (currentExpense.amount <= 0) { alert("Amount must be greater than 0."); return; }
+    if (!currentExpense.paymentMethod) { alert("Please select a payment method."); return; }
+    if (!currentExpense.paidBy) { alert("Please select who paid the expense."); return; }
+    if (!currentExpense.description) { alert("Please enter a description."); return; }
+    const emp = employees.find(e => String(e.id) === currentExpense.paidBy);
+    setExpenseRows(prev => [...prev, { ...currentExpense, paidByName: emp?.name || currentExpense.paidBy }]);
+    setCurrentExpense({ ...emptyExpenseRow });
+    setShowExpenseEntry(false);
+  };
+  const removeExpenseRow = (idx: number) => setExpenseRows(prev => prev.filter((_, i) => i !== idx));
+
   const handleCreateInvoice = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!invoiceForm.customerId) {
       alert("Please select a customer.");
       return;
     }
-    if (invoiceForm.amount <= 0) {
-      alert("Amount must be greater than 0.");
+    // At least one of invoice amount or expenses must be provided
+    const hasInvoice = invoiceForm.amount > 0;
+    const hasExpenses = expenseRows.length > 0;
+    if (!hasInvoice && !hasExpenses) {
+      alert("Please enter an invoice amount or add at least one expense.");
       return;
     }
 
     const finalQuotationId = invoiceForm.quotationId || fallbackQuotationId || null;
     setCreatingInvoice(true);
     try {
-      /* Determine next invoice number */
-      const { data: lastInv } = await supabase
-        .from("invoices")
-        .select("invoice_id")
-        .like("invoice_id", "INV-%")
-        .order("invoice_id", { ascending: false })
-        .limit(1);
-      let nextNum = 1001;
-      if (lastInv && lastInv.length > 0) {
-        const lastNum = parseInt(lastInv[0].invoice_id.replace("INV-", ""), 10);
-        if (!isNaN(lastNum)) nextNum = lastNum + 1;
-      }
-      const invoiceId = "INV-" + String(nextNum).padStart(4, "0");
+      /* ---- Create Invoice (if amount > 0) ---- */
+      if (hasInvoice) {
+        const { data: lastInv } = await supabase
+          .from("invoices")
+          .select("invoice_id")
+          .like("invoice_id", "INV-%")
+          .order("invoice_id", { ascending: false })
+          .limit(1);
+        let nextNum = 1001;
+        if (lastInv && lastInv.length > 0) {
+          const lastNum = parseInt(lastInv[0].invoice_id.replace("INV-", ""), 10);
+          if (!isNaN(lastNum)) nextNum = lastNum + 1;
+        }
+        const invoiceId = "INV-" + String(nextNum).padStart(4, "0");
 
-      const { error } = await supabase.from("invoices").insert({
-        invoice_id: invoiceId,
-        invoice_number: invoiceId, // required
-        quotation_id: finalQuotationId, // can be null now
-        customer_id: invoiceForm.customerId,
-        production_order_id: invoiceForm.productionJobId || null,
-        invoice_date: invoiceForm.issueDate,
-        due_date: invoiceForm.dueDate,
-        subtotal: invoiceForm.amount,
-        tax_amount: 0, // required – you can adjust if you store tax separately
-        total_amount: invoiceForm.amount,
-        status: "Pending",
-        notes: invoiceForm.notes,
-      });
-      if (error) throw error;
+        const { error } = await supabase.from("invoices").insert({
+          invoice_id: invoiceId,
+          invoice_number: invoiceId,
+          quotation_id: finalQuotationId,
+          customer_id: invoiceForm.customerId,
+          production_order_id: invoiceForm.productionJobId || null,
+          invoice_date: invoiceForm.issueDate,
+          due_date: invoiceForm.dueDate,
+          subtotal: invoiceForm.amount,
+          tax_amount: 0,
+          total_amount: invoiceForm.amount,
+          status: "Pending",
+          notes: invoiceForm.notes,
+        });
+        if (error) throw error;
+      }
+
+      /* ---- Create Sundry Expenses ---- */
+      if (hasExpenses) {
+        const { data: user } = await supabase.auth.getUser();
+        // Resolve employee_id for created_by
+        let createdBy = 1;
+        if (user?.user?.id) {
+          const { data: empData } = await supabase
+            .from("employees")
+            .select("employee_id")
+            .eq("auth_user_id", user.user.id)
+            .limit(1);
+          if (empData && empData.length > 0) createdBy = empData[0].employee_id;
+        }
+
+        const expenseInserts = expenseRows.map(row => ({
+          quotation_id: finalQuotationId,
+          production_order_id: invoiceForm.productionJobId || null,
+          customer_id: invoiceForm.customerId,
+          expense_date: row.expenseDate,
+          expense_category: row.expenseCategory,
+          amount: Number(row.amount),
+          total_amount: Number(row.amount),
+          payment_method: row.paymentMethod,
+          paid_by: row.paidByName || row.paidBy,
+          is_approved: row.isApproved,
+          description: row.description,
+          created_by: createdBy,
+        }));
+
+        const { error: expError } = await supabase.from("sundry_expenses").insert(expenseInserts);
+        if (expError) {
+          console.error(expError);
+          throw expError;
+        }
+      }
 
       setShowCreateInvoice(false);
-      await loadData(); // refresh data
+      setExpenseRows([]);
+      setShowExpenseEntry(false);
+      setCurrentExpense({ ...emptyExpenseRow });
+      setInvoiceForm({ customerId: "", productionJobId: "", quotationId: "", amount: 0, issueDate: new Date().toISOString().split("T")[0], dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0], notes: "" });
+      await loadData();
     } catch (err) {
       console.error(err);
-      alert("Failed to create invoice");
+      alert("Failed to create invoice / expenses");
     } finally {
       setCreatingInvoice(false);
     }
   };
 
-  /* --------------------------------------------------------------
-   *  CREATE SUNDRY EXPENSE MODAL HANDLERS
-   * -------------------------------------------------------------- */
-  const handleCreateSundryExpense = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!sundryForm.customerId) {
-      alert("Please select a customer.");
-      return;
-    }
-    if (sundryForm.amount <= 0) {
-      alert("Amount must be greater than 0.");
-      return;
-    }
-    if (!sundryForm.expenseCategory) {
-      alert("Please enter an expense category.");
-      return;
-    }
-    if (!sundryForm.paymentMethod) {
-      alert("Please select a payment method.");
-      return;
-    }
-    if (!sundryForm.paidBy) {
-      alert("Please select who paid the expense.");
-      return;
-    }
 
-    setCreatingSundry(true);
-    try {
-      const { data: user } = await supabase.auth.getUser();
-      const createdBy = user?.user?.id ? 1 : 1; // fallback – you can replace with actual employee lookup if needed
-
-      const { error } = await supabase.from("sundry_expenses").insert([
-        {
-          quotation_id: null, // optional – leave null for now
-          production_order_id: null, // optional – leave null for now
-          customer_id: sundryForm.customerId,
-          expense_date: sundryForm.expenseDate,
-          expense_category: sundryForm.expenseCategory,
-          amount: Number(sundryForm.amount),
-          total_amount: Number(sundryForm.amount) * 1.18, // assuming 18% GST; adjust if you store tax separately
-          payment_method: sundryForm.paymentMethod,
-          paid_by: Number(sundryForm.paidBy),
-          is_approved: sundryForm.isApproved,
-          description: sundryForm.description,
-          created_by: createdBy,
-        }
-      ]);
-      if (error) throw error;
-
-      setShowSundryExpense(false);
-      setSundryForm({
-        customerId: "",
-        expenseDate: new Date().toISOString().split("T")[0],
-        expenseCategory: "",
-        amount: 0,
-        paymentMethod: "",
-        paidBy: "",
-        description: "",
-        isApproved: false,
-      });
-      await loadData(); // refresh sundry list and KPIs/charts
-    } catch (err) {
-      console.error(err);
-      alert("Failed to create sundry expense");
-    } finally {
-      setCreatingSundry(false);
-    }
-  };
 
   /* --------------------------------------------------------------
    *  UI
@@ -360,10 +366,7 @@ export function FinanceDashboard() {
           </div>
           <div className="flex gap-2">
             <button onClick={() => setShowCreateInvoice(true)} className="px-3 py-1.5 text-sm font-medium bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 flex items-center gap-1.5 shadow-sm">
-              <Plus size={14} /> Create Invoice
-            </button>
-            <button onClick={() => setShowSundryExpense(true)} className="px-3 py-1.5 text-sm font-medium bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 flex items-center gap-1.5 shadow-sm">
-              <FileText size={14} /> Add Sundry Expense
+              <Plus size={14} /> Create Invoice & Expenses
             </button>
             <button onClick={loadData} className="px-3 py-1.5 text-sm font-medium border border-slate-200 rounded-lg hover:bg-slate-50 flex items-center gap-1.5 text-slate-600">
               <RefreshCw size={14} className={loading ? "animate-spin" : ""} /> Refresh
@@ -648,104 +651,279 @@ export function FinanceDashboard() {
         )}
       </div>
 
-      {/* ─── Create Invoice Modal ─── */}
+      {/* ─── Combined Create Invoice & Expenses Modal ─── */}
       {showCreateInvoice && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-xl overflow-hidden flex flex-col max-h-[90vh]">
-            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50 sticky top-0">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50 sticky top-0 z-10">
               <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                <FileText size={20} className="text-indigo-600" /> Create New Invoice
+                <FileText size={20} className="text-indigo-600" /> Create Invoice & Expenses
               </h2>
-              <button onClick={() => setShowCreateInvoice(false)} className="text-slate-400 hover:text-slate-600 p-1 rounded-full hover:bg-slate-200 transition-colors">
+              <button onClick={() => { setShowCreateInvoice(false); setExpenseRows([]); setShowExpenseEntry(false); setCurrentExpense({ ...emptyExpenseRow }); }} className="text-slate-400 hover:text-slate-600 p-1 rounded-full hover:bg-slate-200 transition-colors">
                 <X size={20} />
               </button>
             </div>
 
-            <form onSubmit={handleCreateInvoice} className="p-6 overflow-y-auto space-y-5">
-              <div className="grid grid-cols-2 gap-5">
-                <div className="col-span-2 md:col-span-1 space-y-1.5">
-                  <label className="text-sm font-semibold text-slate-700">Customer <span className="text-red-500">*</span></label>
-                  <select
-                    required
-                    value={invoiceForm.customerId}
-                    onChange={(e) => setInvoiceForm({...invoiceForm, customerId: e.target.value, productionJobId: "", quotationId: "", amount: 0})}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-                  >
-                    <option value="">Select Customer</option>
-                    {customers.map((c) => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="col-span-2 md:col-span-1 space-y-1.5">
-                  <label className="text-sm font-semibold text-slate-700">Production Job (Optional)</label>
-                  <select
-                    value={invoiceForm.productionJobId}
-                    onChange={(e) => handleProductionJobChange(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-                    disabled={!invoiceForm.customerId}
-                  >
-                    <option value="">Standalone Invoice</option>
-                    {productionJobs.map((j) => (
-                      <option key={j.production_order_id} value={j.production_order_id}>{j.production_order_id}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-5">
-                <div className="col-span-2 md:col-span-1 space-y-1.5">
-                  <label className="text-sm font-semibold text-slate-700">Issue Date <span className="text-red-500">*</span></label>
-                  <input
-                    type="date"
-                    required
-                    value={invoiceForm.issueDate}
-                    onChange={(e) => setInvoiceForm({...invoiceForm, issueDate: e.target.value})}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-                  />
-                </div>
-                <div className="col-span-2 md:col-span-1 space-y-1.5">
-                  <label className="text-sm font-semibold text-slate-700">Due Date <span className="text-red-500">*</span></label>
-                  <input
-                    type="date"
-                    required
-                    value={invoiceForm.dueDate}
-                    onChange={(e) => setInvoiceForm({...invoiceForm, dueDate: e.target.value})}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-                  />
+            <form onSubmit={handleCreateInvoice} className="overflow-y-auto flex-1">
+              {/* ── Shared Context: Customer & Job ── */}
+              <div className="px-6 pt-5 pb-4 bg-indigo-50/40 border-b border-indigo-100">
+                <p className="text-xs font-bold text-indigo-500 uppercase tracking-wider mb-3">Shared Context</p>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-semibold text-slate-700">Customer <span className="text-red-500">*</span></label>
+                    <select
+                      required
+                      value={invoiceForm.customerId}
+                      onChange={(e) => setInvoiceForm({...invoiceForm, customerId: e.target.value, productionJobId: "", quotationId: "", amount: 0})}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 bg-white"
+                    >
+                      <option value="">Select Customer</option>
+                      {customers.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-semibold text-slate-700">Production Job</label>
+                    <select
+                      value={invoiceForm.productionJobId}
+                      onChange={(e) => handleProductionJobChange(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 bg-white"
+                      disabled={!invoiceForm.customerId}
+                    >
+                      <option value="">Standalone / No Job</option>
+                      {productionJobs.map((j) => (
+                        <option key={j.production_order_id} value={j.production_order_id}>{j.production_order_id}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
               </div>
 
-              <div className="space-y-1.5">
-                <label className="text-sm font-semibold text-slate-700">Invoice Amount (₹) <span className="text-red-500">*</span></label>
-                <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">₹</span>
-                  <input
-                    type="number"
-                    required
-                    min="1"
-                    value={invoiceForm.amount || ""}
-                    onChange={(e) => setInvoiceForm({...invoiceForm, amount: Number(e.target.value)})}
-                    className="w-full pl-8 pr-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 font-semibold text-slate-800"
-                  />
+              {/* ── Invoice Details Section ── */}
+              <div className="px-6 py-5 space-y-4 border-b border-slate-100">
+                <p className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                  <FileText size={13} className="text-indigo-500" /> Invoice Details
+                </p>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-semibold text-slate-700">Issue Date</label>
+                    <input
+                      type="date"
+                      value={invoiceForm.issueDate}
+                      onChange={(e) => setInvoiceForm({...invoiceForm, issueDate: e.target.value})}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-semibold text-slate-700">Due Date</label>
+                    <input
+                      type="date"
+                      value={invoiceForm.dueDate}
+                      onChange={(e) => setInvoiceForm({...invoiceForm, dueDate: e.target.value})}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-semibold text-slate-700">Invoice Amount (₹)</label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">₹</span>
+                      <input
+                        type="number"
+                        step="any"
+                        min="0"
+                        value={invoiceForm.amount || ""}
+                        onChange={(e) => setInvoiceForm({...invoiceForm, amount: Number(e.target.value)})}
+                        className="w-full pl-8 pr-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 font-semibold text-slate-800"
+                        placeholder="0 = skip invoice"
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-semibold text-slate-700">Notes / Remarks</label>
+                    <input
+                      type="text"
+                      value={invoiceForm.notes}
+                      onChange={(e) => setInvoiceForm({...invoiceForm, notes: e.target.value})}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                      placeholder="Optional..."
+                    />
+                  </div>
                 </div>
               </div>
 
-              <div className="space-y-1.5">
-                <label className="text-sm font-semibold text-slate-700">Notes / Remarks</label>
-                <textarea
-                  rows={3}
-                  value={invoiceForm.notes}
-                  onChange={(e) => setInvoiceForm({...invoiceForm, notes: e.target.value})}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-                  placeholder="Optional payment terms or notes..."
-                />
+              {/* ── Sundry Expenses Section ── */}
+              <div className="px-6 py-5 space-y-4">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                    <CreditCard size={13} className="text-rose-500" /> Sundry Expenses
+                    {expenseRows.length > 0 && <span className="ml-1 px-1.5 py-0.5 text-[10px] font-bold bg-rose-100 text-rose-600 rounded-full">{expenseRows.length}</span>}
+                  </p>
+                  {!showExpenseEntry && (
+                    <button
+                      type="button"
+                      onClick={() => setShowExpenseEntry(true)}
+                      className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 px-2 py-1 rounded-md hover:bg-indigo-50 transition-colors"
+                    >
+                      <Plus size={13} /> Add Expense
+                    </button>
+                  )}
+                </div>
+
+                {/* Expense rows already added */}
+                {expenseRows.length > 0 && (
+                  <div className="border border-slate-200 rounded-lg overflow-hidden">
+                    <table className="w-full text-xs">
+                      <thead className="bg-slate-50 text-slate-500">
+                        <tr>
+                          <th className="px-3 py-2 text-left font-medium">Category</th>
+                          <th className="px-3 py-2 text-left font-medium">Amount</th>
+                          <th className="px-3 py-2 text-left font-medium">Method</th>
+                          <th className="px-3 py-2 text-left font-medium">Paid By</th>
+                          <th className="px-3 py-2 text-left font-medium">Date</th>
+                          <th className="px-3 py-2 w-8"></th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {expenseRows.map((row, idx) => (
+                          <tr key={idx} className="hover:bg-slate-50/50">
+                            <td className="px-3 py-2 font-medium text-slate-700">{row.expenseCategory}</td>
+                            <td className="px-3 py-2 font-semibold text-rose-600">{formatCurrency(row.amount)}</td>
+                            <td className="px-3 py-2 text-slate-600">{row.paymentMethod}</td>
+                            <td className="px-3 py-2 text-slate-600">{row.paidByName}</td>
+                            <td className="px-3 py-2 text-slate-500">{new Date(row.expenseDate).toLocaleDateString()}</td>
+                            <td className="px-3 py-2">
+                              <button type="button" onClick={() => removeExpenseRow(idx)} className="text-slate-400 hover:text-red-500 transition-colors">
+                                <X size={14} />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot className="bg-slate-50">
+                        <tr>
+                          <td className="px-3 py-2 font-bold text-slate-700">Total</td>
+                          <td className="px-3 py-2 font-bold text-rose-600" colSpan={5}>
+                            {formatCurrency(expenseRows.reduce((sum, r) => sum + r.amount, 0))}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                )}
+
+                {/* Inline form to add a new expense row */}
+                {showExpenseEntry && (
+                  <div className="border border-indigo-200 rounded-lg p-4 bg-indigo-50/30 space-y-3">
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-xs font-semibold text-slate-600">Category <span className="text-red-500">*</span></label>
+                        <input
+                          type="text"
+                          value={currentExpense.expenseCategory}
+                          onChange={(e) => setCurrentExpense({...currentExpense, expenseCategory: e.target.value})}
+                          className="w-full px-2.5 py-1.5 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                          placeholder="e.g. Travel, Courier"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-xs font-semibold text-slate-600">Amount (₹) <span className="text-red-500">*</span></label>
+                        <div className="relative">
+                          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 text-sm">₹</span>
+                          <input
+                            type="number"
+                            step="any"
+                            min="0.01"
+                            value={currentExpense.amount || ""}
+                            onChange={(e) => setCurrentExpense({...currentExpense, amount: Number(e.target.value)})}
+                            className="w-full pl-7 pr-2.5 py-1.5 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 font-semibold"
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-xs font-semibold text-slate-600">Date <span className="text-red-500">*</span></label>
+                        <input
+                          type="date"
+                          value={currentExpense.expenseDate}
+                          onChange={(e) => setCurrentExpense({...currentExpense, expenseDate: e.target.value})}
+                          className="w-full px-2.5 py-1.5 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                        />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-xs font-semibold text-slate-600">Payment Method <span className="text-red-500">*</span></label>
+                        <select
+                          value={currentExpense.paymentMethod}
+                          onChange={(e) => setCurrentExpense({...currentExpense, paymentMethod: e.target.value})}
+                          className="w-full px-2.5 py-1.5 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                        >
+                          <option value="">Select Method</option>
+                          <option value="Cash">Cash</option>
+                          <option value="Bank Transfer">Bank Transfer</option>
+                          <option value="Cheque">Cheque</option>
+                          <option value="Credit Card">Credit Card</option>
+                          <option value="Online">Online</option>
+                        </select>
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-xs font-semibold text-slate-600">Paid By <span className="text-red-500">*</span></label>
+                        <select
+                          value={currentExpense.paidBy}
+                          onChange={(e) => setCurrentExpense({...currentExpense, paidBy: e.target.value})}
+                          className="w-full px-2.5 py-1.5 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                        >
+                          <option value="">Select Employee</option>
+                          {employees.map((emp) => (
+                            <option key={emp.id} value={String(emp.id)}>{emp.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-semibold text-slate-600">Description <span className="text-red-500">*</span></label>
+                      <input
+                        type="text"
+                        value={currentExpense.description}
+                        onChange={(e) => setCurrentExpense({...currentExpense, description: e.target.value})}
+                        className="w-full px-2.5 py-1.5 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                        placeholder="Brief description of expense..."
+                      />
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <label className="flex items-center gap-2 text-xs font-semibold text-slate-600 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={currentExpense.isApproved}
+                          onChange={(e) => setCurrentExpense({...currentExpense, isApproved: e.target.checked})}
+                          className="h-3.5 w-3.5 text-indigo-600 bg-gray-100 border-gray-300 rounded focus:ring-indigo-500"
+                        />
+                        Approved
+                      </label>
+                      <div className="flex gap-2">
+                        <button type="button" onClick={() => { setShowExpenseEntry(false); setCurrentExpense({ ...emptyExpenseRow }); }} className="px-3 py-1.5 text-xs font-medium text-slate-500 hover:text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors">
+                          Cancel
+                        </button>
+                        <button type="button" onClick={addExpenseRow} className="px-3 py-1.5 text-xs font-medium text-white bg-rose-500 hover:bg-rose-600 rounded-lg transition-colors flex items-center gap-1 shadow-sm">
+                          <Plus size={12} /> Add to List
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {expenseRows.length === 0 && !showExpenseEntry && (
+                  <p className="text-xs text-slate-400 italic text-center py-2">No expenses added yet. Click "+ Add Expense" to include sundry expenses for this job.</p>
+                )}
               </div>
 
-              <div className="pt-4 border-t border-slate-100 flex justify-end gap-3 sticky bottom-0 bg-white">
+              {/* ── Footer ── */}
+              <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-3 sticky bottom-0 bg-white z-10">
                 <button
                   type="button"
-                  onClick={() => setShowCreateInvoice(false)}
+                  onClick={() => { setShowCreateInvoice(false); setExpenseRows([]); setShowExpenseEntry(false); setCurrentExpense({ ...emptyExpenseRow }); }}
                   className="px-4 py-2 font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
                 >
                   Cancel
@@ -756,153 +934,9 @@ export function FinanceDashboard() {
                   className="px-6 py-2 font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors flex items-center gap-2 shadow-sm disabled:opacity-50"
                 >
                   {creatingInvoice ? <RefreshCw size={18} className="animate-spin" /> : <CheckCircle size={18} />}
-                  Generate Invoice
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* ─── Create Sundry Expense Modal ─── */}
-      {showSundryExpense && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-xl overflow-hidden flex flex-col max-h-[90vh]">
-            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50 sticky top-0">
-              <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                <FileText size={20} className="text-indigo-600" /> Add Sundry Expense
-              </h2>
-              <button onClick={() => setShowSundryExpense(false)} className="text-slate-400 hover:text-slate-600 p-1 rounded-full hover:bg-slate-200 transition-colors">
-                <X size={20} />
-              </button>
-            </div>
-
-            <form onSubmit={handleCreateSundryExpense} className="p-6 overflow-y-auto space-y-5">
-              <div className="grid grid-cols-2 gap-5">
-                <div className="col-span-2 md:col-span-1 space-y-1.5">
-                  <label className="text-sm font-semibold text-slate-700">Customer <span className="text-red-500">*</span></label>
-                  <select
-                    required
-                    value={sundryForm.customerId}
-                    onChange={(e) => setSundryForm({...sundryForm, customerId: e.target.value})}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-                  >
-                    <option value="">Select Customer</option>
-                    {customers.map((c) => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="col-span-2 md:col-span-1 space-y-1.5">
-                  <label className="text-sm font-semibold text-slate-700">Expense Category</label>
-                  <input
-                    type="text"
-                    required
-                    value={sundryForm.expenseCategory}
-                    onChange={(e) => setSundryForm({...sundryForm, expenseCategory: e.target.value})}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-5">
-                <div className="col-span-2 md:col-span-1 space-y-1.5">
-                  <label className="text-sm font-semibold text-slate-700">Expense Date <span className="text-red-500">*</span></label>
-                  <input
-                    type="date"
-                    required
-                    value={sundryForm.expenseDate}
-                    onChange={(e) => setSundryForm({...sundryForm, expenseDate: e.target.value})}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-                  />
-                </div>
-                <div className="col-span-2 md:col-span-1 space-y-1.5">
-                  <label className="text-sm font-semibold text-slate-700">Amount (₹) <span className="text-red-500">*</span></label>
-                  <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">₹</span>
-                    <input
-                      type="number"
-                      required
-                      min="1"
-                      value={sundryForm.amount || ""}
-                      onChange={(e) => setSundryForm({...sundryForm, amount: Number(e.target.value)})}
-                      className="w-full pl-8 pr-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 font-semibold text-slate-800"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-5">
-                <div className="col-span-2 md:col-span-1 space-y-1.5">
-                  <label className="text-sm font-semibold text-slate-700">Payment Method</label>
-                  <select
-                    required
-                    value={sundryForm.paymentMethod}
-                    onChange={(e) => setSundryForm({...sundryForm, paymentMethod: e.target.value})}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-                  >
-                    <option value="">Select Payment Method</option>
-                    <option value="Cash">Cash</option>
-                    <option value="Bank Transfer">Bank Transfer</option>
-                    <option value="Cheque">Cheque</option>
-                    <option value="Credit Card">Credit Card</option>
-                    <option value="Online">Online</option>
-                  </select>
-                </div>
-                <div className="col-span-2 md:col-span-1 space-y-1.5">
-                  <label className="text-sm font-semibold text-slate-700">Paid By (Employee)</label>
-                  <select
-                    required
-                    value={sundryForm.paidBy}
-                    onChange={(e) => setSundryForm({...sundryForm, paidBy: e.target.value})}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-                  >
-                    <option value="">Select Employee</option>
-                    {employees.map((emp) => (
-                      <option key={emp.id} value={emp.id}>{emp.name}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-sm font-semibold text-slate-700">Description</label>
-                <textarea
-                  rows={3}
-                  value={sundryForm.description}
-                  onChange={(e) => setSundryForm({...sundryForm, description: e.target.value})}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-                  placeholder="Optional details about the expense..."
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-sm font-semibold text-slate-700">Is Approved?</label>
-                <div className="flex items-center">
-                  <input
-                    type="checkbox"
-                    checked={sundryForm.isApproved}
-                    onChange={(e) => setSundryForm({...sundryForm, isApproved: e.target.checked})}
-                    className="h-4 w-4 text-indigo-600 bg-gray-100 border-gray-300 rounded focus:ring-indigo-500"
-                  />
-                </div>
-              </div>
-
-              <div className="pt-4 border-t border-slate-100 flex justify-end gap-3 sticky bottom-0 bg-white">
-                <button
-                  type="button"
-                  onClick={() => setShowSundryExpense(false)}
-                  className="px-4 py-2 font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={creatingSundry}
-                  className="px-6 py-2 font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors flex items-center gap-2 shadow-sm disabled:opacity-50"
-                >
-                  {creatingSundry ? <RefreshCw size={18} className="animate-spin" /> : <CheckCircle size={18} />}
-                  Add Expense
+                  {invoiceForm.amount > 0 && expenseRows.length > 0 ? "Generate Invoice & Save Expenses" :
+                   invoiceForm.amount > 0 ? "Generate Invoice" :
+                   expenseRows.length > 0 ? "Save Expenses" : "Submit"}
                 </button>
               </div>
             </form>
