@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { QuotationViewModal } from "../components/QuotationViewModal";
 import {
     Search, Calendar, User, Clock, AlertCircle, CheckCircle, Truck,
     Package, Settings, Eye, RefreshCw, AlertTriangle,
@@ -74,6 +75,10 @@ export function ProductionJobs() {
     const [showAssignModal, setShowAssignModal] = useState(false);
     const [progressValue, setProgressValue] = useState<number>(0);
     const [updating, setUpdating] = useState(false);
+
+    // State for Quotation View Modal
+    const [showQuotationView, setShowQuotationView] = useState(false);
+    const [viewQuotationId, setViewQuotationId] = useState<string | null>(null);
 
     // Assignment form state
     const [assignmentData, setAssignmentData] = useState({
@@ -470,6 +475,17 @@ export function ProductionJobs() {
                                         </div>
                                     )}
 
+                                    {/* View Quote Button */}
+                                    <button
+                                        onClick={() => {
+                                            setViewQuotationId(job.quotationId);
+                                            setShowQuotationView(true);
+                                        }}
+                                        className="flex items-center justify-center gap-1 px-3 py-1.5 text-xs bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 transition-colors font-medium"
+                                    >
+                                        <Eye size={12} /> View Quote
+                                    </button>
+
                                     <button
                                         onClick={() => {
                                             setSelectedJob(job);
@@ -532,7 +548,7 @@ export function ProductionJobs() {
                                             <td className="px-4 py-3 text-slate-500 text-xs whitespace-nowrap">{new Date(job.dueDate).toLocaleDateString()}</td>
                                             <td className="px-4 py-3 text-slate-800 text-xs font-bold">₹{job.value.toLocaleString()}</td>
                                             <td className="px-4 py-3">
-                                                <div className="flex items-center gap-1">
+                                                <div className="flex items-center gap-1 flex-wrap">
                                                     {showAssignButton && (
                                                         <button
                                                             onClick={() => openAssignModal(job)}
@@ -563,6 +579,16 @@ export function ProductionJobs() {
                                                             Ready for Dispatch
                                                         </span>
                                                     )}
+                                                    {/* View Quote Button in Table */}
+                                                    <button
+                                                        onClick={() => {
+                                                            setViewQuotationId(job.quotationId);
+                                                            setShowQuotationView(true);
+                                                        }}
+                                                        className="px-2 py-1 text-xs bg-indigo-50 text-indigo-600 rounded hover:bg-indigo-100 transition-colors"
+                                                    >
+                                                        <Eye size={12} />
+                                                    </button>
                                                     <button
                                                         onClick={() => {
                                                             setSelectedJob(job);
@@ -631,7 +657,7 @@ export function ProductionJobs() {
                                     >
                                         <option value="0">Select a machine</option>
                                         {machines
-                                            .filter(m => m.status === 'Active' || m.status === 'Setup') // Only show Active and Setup machines
+                                            .filter(m => m.status === 'Active' || m.status === 'Setup')
                                             .map((m) => (
                                                 <option key={m.id} value={m.id}>
                                                     {m.name} {m.type ? `(${m.type})` : ''} {m.status ? `- ${m.status}` : ''}
@@ -753,6 +779,17 @@ export function ProductionJobs() {
                         </div>
                     </div>
                 </div>
+            )}
+
+            {/* Quotation View Modal */}
+            {showQuotationView && viewQuotationId && (
+                <QuotationViewModal
+                    quotationId={viewQuotationId}
+                    onClose={() => {
+                        setShowQuotationView(false);
+                        setViewQuotationId(null);
+                    }}
+                />
             )}
         </div>
     );

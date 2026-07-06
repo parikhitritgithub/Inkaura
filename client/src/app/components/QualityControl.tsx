@@ -4,7 +4,7 @@ import {
   X, RefreshCw, Plus, BarChart2, ShieldCheck,
   ChevronDown, AlertCircle, Package, Printer,
   ThumbsUp, ThumbsDown, RotateCcw, Search, Lock,
-  UserX,
+  UserX, ClipboardCheck, Check, FileCheck,
 } from "lucide-react";
 import {
   api,
@@ -13,6 +13,7 @@ import {
   QCStats,
   CreateQualityCheckRequest,
   CurrentEmployee,
+  PostDevChecklist,
   hasQCSubmitRole,
   hasQCApproveRole,
 } from "../server/api";
@@ -49,6 +50,45 @@ const CHECKLIST = [
   { id: "finishing_quality",    label: "Lamination — no bubbles, wrinkles, or peeling",  category: "Finishing",    field: "finishing_quality" },
   { id: "binding_quality",      label: "Binding quality meets specification",             category: "Binding",      field: "binding_quality" },
 ] as const;
+
+// ─── Post Development Checklist Items (from physical form) ────
+const POST_DEV_CHECKLIST_ITEMS: {
+  id: keyof Omit<PostDevChecklist, 'checker_notes' | 'carton_type'>;
+  label: string;
+  category: string;
+}[] = [
+  { id: "client_approval_present",   label: "Presence of Client Approval of Artwork",                         category: "Documentation" },
+  { id: "punching_registration",     label: "Check Punching Registration on every carton",                    category: "Registration"  },
+  { id: "printing_defects_check",    label: "Check for printing defects (color consistency, registration, etc.)", category: "Print Quality" },
+  { id: "finishing_correct",         label: "Confirm correct finishing (lamination, varnish, foil, embossing, etc.)", category: "Finishing" },
+  { id: "cutting_folding_binding",   label: "Ensure proper cutting, folding, and binding (if applicable)",     category: "Cutting" },
+  { id: "product_count_verified",    label: "Verify product count against job order",                          category: "Counting" },
+  { id: "carton_pasting_direction",  label: "Carton pasting direction",                                        category: "Assembly" },
+  { id: "alignment_precision",       label: "Check alignment and precision of final trims",                    category: "Trimming" },
+  { id: "excess_paper_removed",      label: "Remove any excess paper or edges",                                 category: "Cleanup" },
+  { id: "clean_smooth_edges",        label: "Ensure clean and smooth edges",                                    category: "Finishing" },
+  { id: "correct_labels_applied",    label: "Apply correct labels (barcodes, batch numbers, job IDs)",          category: "Labeling" },
+  { id: "legal_compliance_markings", label: "Include necessary legal or compliance markings",                   category: "Compliance" },
+];
+
+const CARTON_TYPES = ["RTI", "STI", "CLB", "SLB"] as const;
+
+const DEFAULT_CHECKLIST: PostDevChecklist = {
+  client_approval_present: false,
+  carton_type: "",
+  punching_registration: false,
+  printing_defects_check: false,
+  finishing_correct: false,
+  cutting_folding_binding: false,
+  product_count_verified: false,
+  carton_pasting_direction: false,
+  alignment_precision: false,
+  excess_paper_removed: false,
+  clean_smooth_edges: false,
+  correct_labels_applied: false,
+  legal_compliance_markings: false,
+  checker_notes: "",
+};
 
 // ─── Role helpers — use case-insensitive functions from api ───
 const canSubmitQC  = (role: string) => hasQCSubmitRole(role);
@@ -556,12 +596,166 @@ function NewQCModal({
   );
 }
 
+// ─── Post Dev Checklist Panel ─────────────────────────────────
+function PostDevChecklistPanel({
+  checklist,
+  onChange,
+  readOnly = false,
+}: {
+  checklist: PostDevChecklist;
+  onChange: (checklist: PostDevChecklist) => void;
+  readOnly?: boolean;
+}) {
+  const completedCount = POST_DEV_CHECKLIST_ITEMS.filter(
+    (item) => checklist[item.id]
+  ).length + (checklist.carton_type ? 1 : 0);
+  const totalCount = POST_DEV_CHECKLIST_ITEMS.length + 1; // +1 for carton type
+  const allDone = completedCount === totalCount;
+  const progressPct = Math.round((completedCount / totalCount) * 100);
+
+  return (
+    <div className="space-y-3">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 rounded-lg bg-amber-100 flex items-center justify-center">
+            <ClipboardCheck size={14} className="text-amber-600" />
+          </div>
+          <div>
+            <p className="text-xs font-bold text-slate-800">Post Press New Development Checklist</p>
+            <p className="text-[10px] text-slate-400">All items must be verified before approval</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className={`text-xs font-bold ${
+            allDone ? "text-green-600" : "text-amber-600"
+          }`}>
+            {completedCount}/{totalCount}
+          </span>
+          {allDone && (
+            <span className="flex items-center gap-1 px-2 py-0.5 bg-green-100 text-green-700 rounded-full text-[10px] font-semibold">
+              <Check size={10} /> Complete
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Progress bar */}
+      <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+        <div
+          className={`h-full rounded-full transition-all duration-500 ease-out ${
+            allDone
+              ? "bg-green-500"
+              : progressPct > 50
+              ? "bg-amber-500"
+              : "bg-orange-400"
+          }`}
+          style={{ width: `${progressPct}%` }}
+        />
+      </div>
+
+      {/* Carton Type Select */}
+      <div className={`flex items-center justify-between p-3 rounded-lg border transition-all ${
+        checklist.carton_type
+          ? "bg-green-50/50 border-green-200"
+          : "bg-slate-50/50 border-slate-100"
+      }`}>
+        <div className="flex-1 min-w-0 mr-4">
+          <p className="text-xs text-slate-700 font-medium">Carton Type (RTI, STI, CLB, SLB)</p>
+          <p className="text-[10px] text-slate-400 mt-0.5">Registration</p>
+        </div>
+        <div className="flex gap-1.5 flex-shrink-0">
+          {CARTON_TYPES.map((type) => (
+            <button
+              key={type}
+              disabled={readOnly}
+              onClick={() => onChange({ ...checklist, carton_type: checklist.carton_type === type ? "" : type })}
+              className={`px-2.5 py-1 text-[11px] rounded-lg border font-medium transition-all ${
+                checklist.carton_type === type
+                  ? "bg-indigo-600 text-white border-indigo-600 shadow-sm"
+                  : "bg-white text-slate-500 border-slate-200 hover:border-slate-300"
+              } ${readOnly ? 'cursor-default opacity-70' : 'cursor-pointer'}`}
+            >
+              {type}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Checklist Items */}
+      <div className="space-y-1">
+        {POST_DEV_CHECKLIST_ITEMS.map((item, idx) => {
+          const isChecked = checklist[item.id];
+          return (
+            <div
+              key={item.id}
+              className={`flex items-center gap-3 p-2.5 rounded-lg border transition-all cursor-pointer ${
+                isChecked
+                  ? "bg-green-50/50 border-green-200"
+                  : "bg-white border-slate-100 hover:border-slate-200 hover:bg-slate-50/50"
+              } ${readOnly ? 'cursor-default' : ''}`}
+              onClick={() => {
+                if (readOnly) return;
+                onChange({ ...checklist, [item.id]: !isChecked });
+              }}
+            >
+              <div className={`w-5 h-5 rounded flex items-center justify-center flex-shrink-0 border-2 transition-all ${
+                isChecked
+                  ? "bg-green-500 border-green-500 text-white"
+                  : "bg-white border-slate-300"
+              }`}>
+                {isChecked && <Check size={12} strokeWidth={3} />}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className={`text-xs leading-relaxed ${
+                  isChecked ? "text-green-800" : "text-slate-700"
+                }`}>
+                  <span className="text-slate-400 font-mono text-[10px] mr-1.5">{idx + 1}.</span>
+                  {item.label}
+                </p>
+              </div>
+              <span className={`text-[10px] px-1.5 py-0.5 rounded flex-shrink-0 ${
+                isChecked
+                  ? "bg-green-100 text-green-600"
+                  : "bg-slate-100 text-slate-400"
+              }`}>
+                {item.category}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Checker Notes */}
+      {!readOnly && (
+        <div>
+          <label className="block text-xs text-slate-600 mb-1 font-medium">Checker Notes (optional)</label>
+          <textarea
+            value={checklist.checker_notes}
+            onChange={(e) => onChange({ ...checklist, checker_notes: e.target.value })}
+            rows={2}
+            className="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg
+              resize-none focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-400"
+            placeholder="Any observations during checklist verification..."
+          />
+        </div>
+      )}
+      {readOnly && checklist.checker_notes && (
+        <div className="p-2.5 bg-slate-50 border border-slate-100 rounded-lg">
+          <p className="text-[10px] text-slate-400 mb-0.5 font-semibold">Checker Notes</p>
+          <p className="text-xs text-slate-600">{checklist.checker_notes}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── QC Detail Modal ──────────────────────────────────────────
 interface QCDetailModalProps {
   qc:              QualityCheck;
   currentEmployee: CurrentEmployee | null;
   onClose:         () => void;
-  onApprove:       (id: number, notes?: string) => Promise<void>;
+  onApprove:       (id: number, notes?: string, checklist?: PostDevChecklist) => Promise<void>;
   onReject:        (id: number, desc: string, rework: boolean, reworkDesc?: string) => Promise<void>;
 }
 
@@ -572,16 +766,28 @@ function QCDetailModal({ qc, currentEmployee, onClose, onApprove, onReject }: QC
   const [rework,     setRework]     = useState(qc.rework_required);
   const [reworkDesc, setReworkDesc] = useState(qc.rework_description || "");
   const [submitting, setSubmitting] = useState(false);
+  const [checklist,  setChecklist]  = useState<PostDevChecklist>(
+    qc.post_dev_checklist || { ...DEFAULT_CHECKLIST }
+  );
+  const [showChecklist, setShowChecklist] = useState(false);
 
   const userRole       = currentEmployee?.role || '';
   const hasApprovePerm = canApproveQC(userRole);
   const canAct         = qc.overall_status === "Passed" && !qc.approved_for_dispatch;
 
+  // Check if checklist is complete
+  const checklistItemsCompleted = POST_DEV_CHECKLIST_ITEMS.filter(
+    (item) => checklist[item.id]
+  ).length + (checklist.carton_type ? 1 : 0);
+  const checklistTotal = POST_DEV_CHECKLIST_ITEMS.length + 1;
+  const isChecklistComplete = checklistItemsCompleted === checklistTotal;
+  const hasExistingChecklist = !!qc.post_dev_checklist;
+
   const handleAction = async () => {
     setSubmitting(true);
     try {
       if (action === "approve") {
-        await onApprove(qc.qc_id, notes);
+        await onApprove(qc.qc_id, notes, checklist);
       } else if (action === "reject") {
         await onReject(qc.qc_id, defectDesc, rework, reworkDesc);
       }
@@ -740,16 +946,77 @@ function QCDetailModal({ qc, currentEmployee, onClose, onApprove, onReject }: QC
                   </div>
 
                   {action === "approve" && (
-                    <div>
-                      <label className="block text-xs text-slate-600 mb-1">Approval Notes (optional)</label>
-                      <textarea
-                        value={notes}
-                        onChange={(e) => setNotes(e.target.value)}
-                        rows={2}
-                        className="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg
-                          resize-none focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-400"
-                        placeholder="Add approval notes..."
-                      />
+                    <div className="space-y-4">
+                      {/* Post Development Checklist */}
+                      <div className={`p-4 rounded-xl border-2 transition-all ${
+                        isChecklistComplete
+                          ? "border-green-200 bg-green-50/30"
+                          : "border-amber-200 bg-amber-50/30"
+                      }`}>
+                        <div className="flex items-center justify-between mb-3">
+                          <button
+                            onClick={() => setShowChecklist(!showChecklist)}
+                            className="flex items-center gap-2 text-left"
+                          >
+                            <FileCheck size={16} className={isChecklistComplete ? "text-green-600" : "text-amber-600"} />
+                            <div>
+                              <p className="text-xs font-bold text-slate-800">
+                                Post Press Development Checklist
+                                {!isChecklistComplete && (
+                                  <span className="text-red-500 ml-1">*</span>
+                                )}
+                              </p>
+                              <p className="text-[10px] text-slate-400">
+                                {isChecklistComplete
+                                  ? "All items verified — ready to approve"
+                                  : `${checklistItemsCompleted}/${checklistTotal} verified — complete all to approve`}
+                              </p>
+                            </div>
+                          </button>
+                          <button
+                            onClick={() => setShowChecklist(!showChecklist)}
+                            className={`px-2.5 py-1 text-[11px] rounded-lg border font-medium transition-all ${
+                              showChecklist
+                                ? "bg-slate-800 text-white border-slate-800"
+                                : isChecklistComplete
+                                ? "bg-green-100 text-green-700 border-green-200 hover:bg-green-200"
+                                : "bg-amber-100 text-amber-700 border-amber-200 hover:bg-amber-200"
+                            }`}
+                          >
+                            {showChecklist ? "Collapse" : isChecklistComplete ? "Review" : "Open Checklist"}
+                          </button>
+                        </div>
+
+                        {showChecklist && (
+                          <PostDevChecklistPanel
+                            checklist={checklist}
+                            onChange={setChecklist}
+                            readOnly={false}
+                          />
+                        )}
+
+                        {!showChecklist && !isChecklistComplete && (
+                          <div className="flex items-center gap-2 p-2.5 bg-amber-50 border border-amber-200 rounded-lg">
+                            <AlertCircle size={13} className="text-amber-500 flex-shrink-0" />
+                            <p className="text-[11px] text-amber-700">
+                              You must complete the checklist before approving. Click "Open Checklist" above.
+                            </p>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Approval Notes */}
+                      <div>
+                        <label className="block text-xs text-slate-600 mb-1">Approval Notes (optional)</label>
+                        <textarea
+                          value={notes}
+                          onChange={(e) => setNotes(e.target.value)}
+                          rows={2}
+                          className="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg
+                            resize-none focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-400"
+                          placeholder="Add approval notes..."
+                        />
+                      </div>
                     </div>
                   )}
 
@@ -790,11 +1057,23 @@ function QCDetailModal({ qc, currentEmployee, onClose, onApprove, onReject }: QC
                   {action && (
                     <button
                       onClick={handleAction}
-                      disabled={submitting || (action === "reject" && !defectDesc)}
-                      className="w-full py-2.5 rounded-xl text-sm font-semibold text-white
-                        bg-slate-800 hover:bg-slate-900 transition-colors disabled:opacity-50"
+                      disabled={
+                        submitting ||
+                        (action === "approve" && !isChecklistComplete) ||
+                        (action === "reject" && !defectDesc)
+                      }
+                      className={`w-full py-2.5 rounded-xl text-sm font-semibold text-white
+                        transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                        action === "approve" && !isChecklistComplete
+                          ? "bg-amber-500 hover:bg-amber-600"
+                          : "bg-slate-800 hover:bg-slate-900"
+                      }`}
                     >
-                      {submitting ? "Submitting..." : "Confirm Decision"}
+                      {submitting
+                        ? "Submitting..."
+                        : action === "approve" && !isChecklistComplete
+                        ? `Complete Checklist (${checklistItemsCompleted}/${checklistTotal})`
+                        : "Confirm Decision"}
                     </button>
                   )}
                 </div>
@@ -804,19 +1083,46 @@ function QCDetailModal({ qc, currentEmployee, onClose, onApprove, onReject }: QC
 
           {/* Already approved */}
           {qc.approved_for_dispatch && (
-            <div className="flex items-center gap-3 p-3 bg-green-50 border border-green-100 rounded-lg">
-              <CheckCircle size={18} className="text-green-600 flex-shrink-0" />
-              <div>
-                <p className="text-xs font-semibold text-green-800">Approved for Dispatch</p>
-                {qc.approved_by_name && (
-                  <p className="text-xs text-green-700">Approved by {qc.approved_by_name}</p>
-                )}
-                {qc.approved_date && (
-                  <p className="text-xs text-green-600">
-                    {new Date(qc.approved_date).toLocaleDateString("en-IN")}
-                  </p>
-                )}
+            <div className="space-y-3">
+              <div className="flex items-center gap-3 p-3 bg-green-50 border border-green-100 rounded-lg">
+                <CheckCircle size={18} className="text-green-600 flex-shrink-0" />
+                <div>
+                  <p className="text-xs font-semibold text-green-800">Approved for Dispatch</p>
+                  {qc.approved_by_name && (
+                    <p className="text-xs text-green-700">Approved by {qc.approved_by_name}</p>
+                  )}
+                  {qc.approved_date && (
+                    <p className="text-xs text-green-600">
+                      {new Date(qc.approved_date).toLocaleDateString("en-IN")}
+                    </p>
+                  )}
+                </div>
               </div>
+
+              {/* Show completed checklist in read-only mode */}
+              {qc.post_dev_checklist && (
+                <div className="p-4 bg-green-50/30 border border-green-200 rounded-xl">
+                  <div className="flex items-center gap-2 mb-3">
+                    <FileCheck size={14} className="text-green-600" />
+                    <div>
+                      <p className="text-xs font-bold text-green-800">Post Press Checklist ✓ Verified</p>
+                      {qc.checklist_verified_by_name && (
+                        <p className="text-[10px] text-green-600">
+                          Verified by {qc.checklist_verified_by_name}
+                          {qc.checklist_verified_date && (
+                            <> on {new Date(qc.checklist_verified_date).toLocaleDateString("en-IN")}</>
+                          )}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <PostDevChecklistPanel
+                    checklist={qc.post_dev_checklist}
+                    onChange={() => {}}
+                    readOnly={true}
+                  />
+                </div>
+              )}
             </div>
           )}
 
@@ -882,8 +1188,8 @@ export function QualityControl() {
     await loadData();
   };
 
-  const handleApprove = async (id: number, notes?: string) => {
-    await api.approveQualityCheck(id, notes);
+  const handleApprove = async (id: number, notes?: string, checklist?: PostDevChecklist) => {
+    await api.approveQualityCheck(id, notes, checklist);
     await loadData();
   };
 

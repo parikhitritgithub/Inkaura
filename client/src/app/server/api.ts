@@ -43,6 +43,23 @@ export interface CurrentEmployee {
     department?: string;
 }
 
+export interface PostDevChecklist {
+    client_approval_present: boolean;
+    carton_type: string;
+    punching_registration: boolean;
+    printing_defects_check: boolean;
+    finishing_correct: boolean;
+    cutting_folding_binding: boolean;
+    product_count_verified: boolean;
+    carton_pasting_direction: boolean;
+    alignment_precision: boolean;
+    excess_paper_removed: boolean;
+    clean_smooth_edges: boolean;
+    correct_labels_applied: boolean;
+    legal_compliance_markings: boolean;
+    checker_notes: string;
+}
+
 export interface QualityCheck {
     qc_id: number;
     production_order_id: string;
@@ -68,6 +85,10 @@ export interface QualityCheck {
     approved_by_name?: string;
     approved_date?: string;
     notes?: string;
+    post_dev_checklist?: PostDevChecklist | null;
+    checklist_verified_by?: number | null;
+    checklist_verified_by_name?: string;
+    checklist_verified_date?: string | null;
     created_at: string;
     customer_name: string;
     product_name: string;
@@ -412,6 +433,10 @@ const mapToQualityCheck = (item: any): QualityCheck => ({
     approved_by_name: item.approved_by_emp?.full_name,
     approved_date: item.approved_date,
     notes: item.notes,
+    post_dev_checklist: item.post_dev_checklist || null,
+    checklist_verified_by: item.checklist_verified_by || null,
+    checklist_verified_by_name: item.approved_by_emp?.full_name || undefined,
+    checklist_verified_date: item.checklist_verified_date || null,
     created_at: item.created_at,
     customer_name: 'Unknown',
     product_name: 'Unknown Product',
@@ -1188,7 +1213,7 @@ export const api = {
                 .from('sample_orders')
                 .select('sample_order_id, status, sample_quantity, quotation_id')
                 .order('created_at', { ascending: false });
-            
+
             if (sError) throw sError;
 
             const enriched: QCJob[] = [];
@@ -1344,7 +1369,7 @@ export const api = {
         }
     },
 
-    approveQualityCheck: async (qcId: number, notes?: string): Promise<void> => {
+    approveQualityCheck: async (qcId: number, notes?: string, checklist?: PostDevChecklist): Promise<void> => {
         try {
             const employee = await api.getCurrentEmployee();
             if (employee && !hasQCApproveRole(employee.role)) {
@@ -1363,14 +1388,22 @@ export const api = {
                 .single();
             if (fetchError) throw fetchError;
 
+            const updatePayload: any = {
+                approved_for_dispatch: true,
+                approved_by: approvedBy,
+                approved_date: new Date().toISOString(),
+                notes: notes || null,
+            };
+
+            // Store checklist data if provided
+            if (checklist) {
+                updatePayload.post_dev_checklist = checklist;
+                updatePayload.checklist_verified_date = new Date().toISOString();
+            }
+
             const { error } = await supabase
                 .from('quality_checks')
-                .update({
-                    approved_for_dispatch: true,
-                    approved_by: approvedBy,
-                    approved_date: new Date().toISOString(),
-                    notes: notes || null,
-                })
+                .update(updatePayload)
                 .eq('qc_id', qcId);
             if (error) throw error;
 

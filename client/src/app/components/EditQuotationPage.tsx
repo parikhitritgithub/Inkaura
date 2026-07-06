@@ -1,17 +1,17 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../server/api";
-import { 
-  Plus, Trash2, Save, Send, AlertCircle, FileText, 
-  ChevronRight, Box, Package, FileUp, Info, Search, ChevronDown
+import {
+  Plus, Trash2, Save, AlertCircle, FileText,
+  ChevronRight, Box, Package, FileUp, Info, Search, ChevronDown, X
 } from "lucide-react";
 
 export function EditQuotationPage() {
   const navigate = useNavigate();
   const { id } = useParams();
   const [loading, setLoading] = useState(false);
-  const [customers, setCustomers] = useState<{id: string, name: string, contact_person: string}[]>([]);
-  const [employees, setEmployees] = useState<{id: number, name: string}[]>([]);
+  const [customers, setCustomers] = useState<{ id: string, name: string, contact_person: string }[]>([]);
+  const [employees, setEmployees] = useState<{ id: number, name: string }[]>([]);
   const [customerSearch, setCustomerSearch] = useState("");
   const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
 
@@ -25,8 +25,37 @@ export function EditQuotationPage() {
     reference_number: "",
   });
 
-  // 3. Products
-  const [products, setProducts] = useState([{
+  // 3. Products - Store original IDs for update
+  const [products, setProducts] = useState<Array<{
+    id: number; // frontend temporary id
+    quotation_product_id?: number; // actual DB id for updates
+    product_name: string;
+    product_type: string;
+    production_quantity: number;
+    sample_quantity: number;
+    material_type: string;
+    paper_type: string;
+    gsm: number;
+    thickness: string;
+    width_mm: number;
+    height_mm: number;
+    depth_mm: number;
+    printing_technology: string;
+    front_colors: number;
+    back_colors: number;
+    spot_colors: number;
+    lamination: string;
+    uv_coating: boolean;
+    embossing: boolean;
+    foiling: boolean;
+    die_cutting: boolean;
+    folding: boolean;
+    binding: string;
+    packaging_type: string;
+    cartons: number;
+    special_instructions: string;
+    _frontend_price: number;
+  }>>([{
     id: 1,
     product_name: "",
     product_type: "Custom",
@@ -53,8 +82,7 @@ export function EditQuotationPage() {
     packaging_type: "",
     cartons: 0,
     special_instructions: "",
-    // Temporary frontend price field to calculate commercials
-    _frontend_price: 0 
+    _frontend_price: 0
   }]);
 
   // 2. Commercial Details (Auto-calculated mostly)
@@ -120,8 +148,8 @@ export function EditQuotationPage() {
           api.getCustomers(),
           api.getEmployees()
         ]);
-        setCustomers(c.map(x => ({id: x.id, name: x.name, contact_person: (x as any).contact_person || ""})));
-        setEmployees(e.map(x => ({id: Number(x.id), name: x.name})));
+        setCustomers(c.map(x => ({ id: x.id, name: x.name, contact_person: (x as any).contact_person || "" })));
+        setEmployees(e.map(x => ({ id: Number(x.id), name: x.name })));
 
         if (id) {
           const q = await api.getQuotationForEdit(id);
@@ -134,36 +162,39 @@ export function EditQuotationPage() {
               currency: "INR",
               reference_number: "",
             });
-            
+
             if (q.quotation_products && q.quotation_products.length > 0) {
               setProducts(q.quotation_products.map((p: any, idx: number) => ({
-                id: p.quotation_product_id || idx,
+                id: idx + 1,
+                quotation_product_id: p.quotation_product_id || p.id,
                 product_name: p.product_name || "",
                 product_type: p.product_type || "Custom",
                 production_quantity: p.production_quantity || 1000,
-                sample_quantity: 0,
+                sample_quantity: p.sample_quantity || 0,
                 material_type: p.material_type || "",
-                paper_type: "",
+                paper_type: p.paper_type || "",
                 gsm: p.paper_gsm || 0,
-                thickness: "",
+                thickness: p.thickness || "",
                 width_mm: (p.width_cm || 0) * 10,
                 height_mm: (p.height_cm || 0) * 10,
-                depth_mm: 0,
+                depth_mm: p.depth_mm || 0,
                 printing_technology: p.printing_technology || "Offset",
-                front_colors: p.color_type === 'CMYK' ? 4 : 1,
-                back_colors: 0,
-                spot_colors: 0,
+                front_colors: p.front_colors || 4,
+                back_colors: p.back_colors || 0,
+                spot_colors: p.spot_colors || 0,
                 lamination: p.lamination || "",
-                uv_coating: false,
-                embossing: false,
-                foiling: false,
-                die_cutting: false,
-                folding: false,
-                binding: "",
+                uv_coating: p.uv_coating || false,
+                embossing: p.embossing || false,
+                foiling: p.foiling || false,
+                die_cutting: p.die_cutting || false,
+                folding: p.folding || false,
+                binding: p.binding || "",
                 packaging_type: p.packaging_type || "",
-                cartons: 0,
-                special_instructions: "",
-                _frontend_price: Number(q.total_payment) / q.quotation_products.length
+                cartons: p.cartons || 0,
+                special_instructions: p.special_instructions || "",
+                _frontend_price: q.total_payment && q.quotation_products.length > 0
+                  ? Number(q.total_payment) / q.quotation_products.length
+                  : 0
               })));
             }
 
@@ -176,10 +207,10 @@ export function EditQuotationPage() {
               packing_charges: 0,
               other_charges: 0
             });
-            
+
             let parsedCustomerNotes = q.notes || "";
             let parsedInternalNotes = "";
-            
+
             if (parsedCustomerNotes.includes("---JSON_META_DATA---")) {
               const parts = parsedCustomerNotes.split("---JSON_META_DATA---");
               parsedCustomerNotes = parts[0].trim();
@@ -188,13 +219,13 @@ export function EditQuotationPage() {
                 if (meta.sampleReq) setSampleReq(meta.sampleReq);
                 if (meta.delivery) setDelivery(meta.delivery);
                 if (meta.costSummary) setCostSummary(meta.costSummary);
-              } catch (e) {}
+              } catch (e) { }
             }
-            
+
             if (parsedCustomerNotes.includes("Internal: ")) {
-               const parts = parsedCustomerNotes.split("Internal: ");
-               parsedCustomerNotes = parts[0].trim();
-               parsedInternalNotes = parts[1].trim();
+              const parts = parsedCustomerNotes.split("Internal: ");
+              parsedCustomerNotes = parts[0].trim();
+              parsedInternalNotes = parts[1]?.trim() || "";
             }
 
             setNotes({
@@ -214,12 +245,31 @@ export function EditQuotationPage() {
   const handleAddProduct = () => {
     setProducts([...products, {
       id: Date.now(),
-      product_name: "", product_type: "Custom", production_quantity: 1000, sample_quantity: 0,
-      material_type: "", paper_type: "", gsm: 0, thickness: "",
-      width_mm: 0, height_mm: 0, depth_mm: 0,
-      printing_technology: "Offset", front_colors: 4, back_colors: 0, spot_colors: 0,
-      lamination: "", uv_coating: false, embossing: false, foiling: false, die_cutting: false, folding: false, binding: "",
-      packaging_type: "", cartons: 0, special_instructions: "",
+      product_name: "",
+      product_type: "Custom",
+      production_quantity: 1000,
+      sample_quantity: 0,
+      material_type: "",
+      paper_type: "",
+      gsm: 0,
+      thickness: "",
+      width_mm: 0,
+      height_mm: 0,
+      depth_mm: 0,
+      printing_technology: "Offset",
+      front_colors: 4,
+      back_colors: 0,
+      spot_colors: 0,
+      lamination: "",
+      uv_coating: false,
+      embossing: false,
+      foiling: false,
+      die_cutting: false,
+      folding: false,
+      binding: "",
+      packaging_type: "",
+      cartons: 0,
+      special_instructions: "",
       _frontend_price: 0
     }]);
   };
@@ -230,51 +280,84 @@ export function EditQuotationPage() {
     }
   };
 
-  const handleSave = async (status: 'Draft' | 'Pending' | 'Sent') => {
+  const handleSave = async (status: 'Draft' | 'Pending' | 'Sent' | 'Approved') => {
     if (!basicInfo.customer_id || !basicInfo.created_by) {
       alert("Please select a Customer and an Owner.");
       return;
     }
     setLoading(true);
     try {
-      const payload = {
-        customer_id: basicInfo.customer_id,
-        created_by: basicInfo.created_by,
-        quotation_date: basicInfo.quotation_date,
-        total_payment: finalTotal,
-        advance_required: advanceAmount > 0,
-        advance_percentage: commercials.advance_percentage,
-        advance_amount: advanceAmount,
-        status: status,
-        valid_until: basicInfo.valid_until,
-        notes: notes.customer_notes + 
-          (notes.internal_notes ? `\n\nInternal: ${notes.internal_notes}` : "") +
-          `\n\n---JSON_META_DATA---\n${JSON.stringify({ sampleReq, delivery, costSummary })}`,
-        products: products.map(p => ({
-          product_name: p.product_name,
-          product_type: p.product_type,
-          production_quantity: p.production_quantity,
-          sample_quantity: p.sample_quantity,
-          material_type: p.material_type,
-          paper_type: p.paper_type,
-          gsm: p.gsm,
-          width_mm: p.width_mm,
-          height_mm: p.height_mm,
-          depth_mm: p.depth_mm,
-          printing_technology: p.printing_technology,
-          front_colors: p.front_colors,
-          back_colors: p.back_colors,
-          lamination: p.lamination,
-          packaging_type: p.packaging_type
-        }))
-      };
+      // First, update the quotation
+      const { error: quoteError } = await supabase
+        .from('quotations')
+        .update({
+          customer_id: basicInfo.customer_id,
+          created_by: basicInfo.created_by,
+          quotation_date: basicInfo.quotation_date,
+          total_payment: finalTotal,
+          advance_percentage: commercials.advance_percentage,
+          status: status,
+          delivery_date: basicInfo.valid_until,
+          notes: notes.customer_notes +
+            (notes.internal_notes ? `\n\nInternal: ${notes.internal_notes}` : "") +
+            `\n\n---JSON_META_DATA---\n${JSON.stringify({ sampleReq, delivery, costSummary })}`,
+          updated_at: new Date().toISOString()
+        })
+        .eq('quotation_id', id);
 
-      if (!id) return;
-      await api.updateQuotation(id, payload as any);
+      if (quoteError) throw quoteError;
+
+      // Handle products - delete existing and re-insert
+      const { error: deleteError } = await supabase
+        .from('quotation_products')
+        .delete()
+        .eq('quotation_id', id);
+
+      if (deleteError) throw deleteError;
+
+      // Insert updated products
+      if (products.length > 0) {
+        const productsToInsert = products.map(p => ({
+          quotation_id: id,
+          product_name: p.product_name || 'Custom Print Job',
+          product_type: p.product_type || 'Custom',
+          production_quantity: p.production_quantity || 1000,
+          sample_quantity: p.sample_quantity || 0,
+          material_type: p.material_type || '',
+          paper_type: p.paper_type || '',
+          paper_gsm: p.gsm || 0,
+          thickness: p.thickness || '',
+          width_cm: p.width_mm / 10 || 0,
+          height_cm: p.height_mm / 10 || 0,
+          depth_mm: p.depth_mm || 0,
+          printing_technology: p.printing_technology || 'Offset',
+          front_colors: p.front_colors || 4,
+          back_colors: p.back_colors || 0,
+          spot_colors: p.spot_colors || 0,
+          lamination: p.lamination || '',
+          uv_coating: p.uv_coating || false,
+          embossing: p.embossing || false,
+          foiling: p.foiling || false,
+          die_cutting: p.die_cutting || false,
+          folding: p.folding || false,
+          binding: p.binding || '',
+          packaging_type: p.packaging_type || '',
+          cartons: p.cartons || 0,
+          special_instructions: p.special_instructions || '',
+        }));
+
+        const { error: productError } = await supabase
+          .from('quotation_products')
+          .insert(productsToInsert);
+
+        if (productError) throw productError;
+      }
+
+      alert(`✅ Quotation ${id} updated successfully!`);
       navigate("/quotations");
     } catch (err) {
       console.error(err);
-      alert("Failed to create quotation.");
+      alert("Failed to update quotation. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -300,13 +383,13 @@ export function EditQuotationPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
           <div className="relative">
             <label className="block text-xs font-semibold text-slate-700 mb-1">Customer</label>
-            <div 
+            <div
               className="w-full p-2.5 border border-slate-200 rounded-lg text-sm bg-white flex justify-between items-center cursor-pointer"
               onClick={() => setShowCustomerDropdown(!showCustomerDropdown)}
             >
               <span className={basicInfo.customer_id ? "text-slate-900" : "text-slate-400"}>
-                {basicInfo.customer_id 
-                  ? customers.find(c => c.id === basicInfo.customer_id)?.contact_person 
+                {basicInfo.customer_id
+                  ? customers.find(c => c.id === basicInfo.customer_id)?.contact_person
                     ? `${customers.find(c => c.id === basicInfo.customer_id)?.contact_person} (${customers.find(c => c.id === basicInfo.customer_id)?.name})`
                     : customers.find(c => c.id === basicInfo.customer_id)?.name
                   : "Search & Select Customer"}
@@ -317,9 +400,9 @@ export function EditQuotationPage() {
               <div className="absolute z-50 mt-1 w-full bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden">
                 <div className="p-2 border-b border-slate-100 flex items-center gap-2">
                   <Search size={14} className="text-slate-400" />
-                  <input 
-                    type="text" 
-                    placeholder="Search by name or company..." 
+                  <input
+                    type="text"
+                    placeholder="Search by name or company..."
                     className="w-full text-sm focus:outline-none"
                     value={customerSearch}
                     onChange={e => setCustomerSearch(e.target.value)}
@@ -327,15 +410,15 @@ export function EditQuotationPage() {
                   />
                 </div>
                 <div className="max-h-60 overflow-y-auto">
-                  {customers.filter(c => 
-                    c.name.toLowerCase().includes(customerSearch.toLowerCase()) || 
+                  {customers.filter(c =>
+                    c.name.toLowerCase().includes(customerSearch.toLowerCase()) ||
                     c.contact_person.toLowerCase().includes(customerSearch.toLowerCase())
                   ).map(c => (
-                    <div 
-                      key={c.id} 
+                    <div
+                      key={c.id}
                       className="px-4 py-2 hover:bg-slate-50 cursor-pointer border-b border-slate-50 last:border-0"
                       onClick={() => {
-                        setBasicInfo({...basicInfo, customer_id: c.id});
+                        setBasicInfo({ ...basicInfo, customer_id: c.id });
                         setShowCustomerDropdown(false);
                         setCustomerSearch("");
                       }}
@@ -353,29 +436,29 @@ export function EditQuotationPage() {
           </div>
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1">Owner (Employee)</label>
-            <select className="w-full p-2.5 border border-slate-200 rounded-lg text-sm" value={basicInfo.created_by} onChange={e => setBasicInfo({...basicInfo, created_by: Number(e.target.value)})}>
+            <select className="w-full p-2.5 border border-slate-200 rounded-lg text-sm" value={basicInfo.created_by} onChange={e => setBasicInfo({ ...basicInfo, created_by: Number(e.target.value) })}>
               <option value="0">Select Owner</option>
               {employees.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
             </select>
           </div>
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1">Currency</label>
-            <select className="w-full p-2.5 border border-slate-200 rounded-lg text-sm" value={basicInfo.currency} onChange={e => setBasicInfo({...basicInfo, currency: e.target.value})}>
+            <select className="w-full p-2.5 border border-slate-200 rounded-lg text-sm" value={basicInfo.currency} onChange={e => setBasicInfo({ ...basicInfo, currency: e.target.value })}>
               <option value="INR">INR (₹)</option>
               <option value="USD">USD ($)</option>
             </select>
           </div>
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1">Quotation Date</label>
-            <input type="date" className="w-full p-2.5 border border-slate-200 rounded-lg text-sm" value={basicInfo.quotation_date} onChange={e => setBasicInfo({...basicInfo, quotation_date: e.target.value})} />
+            <input type="date" className="w-full p-2.5 border border-slate-200 rounded-lg text-sm" value={basicInfo.quotation_date} onChange={e => setBasicInfo({ ...basicInfo, quotation_date: e.target.value })} />
           </div>
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1">Validity Until</label>
-            <input type="date" className="w-full p-2.5 border border-slate-200 rounded-lg text-sm" value={basicInfo.valid_until} onChange={e => setBasicInfo({...basicInfo, valid_until: e.target.value})} />
+            <input type="date" className="w-full p-2.5 border border-slate-200 rounded-lg text-sm" value={basicInfo.valid_until} onChange={e => setBasicInfo({ ...basicInfo, valid_until: e.target.value })} />
           </div>
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1">Customer Ref / PO</label>
-            <input type="text" placeholder="Optional" className="w-full p-2.5 border border-slate-200 rounded-lg text-sm" value={basicInfo.reference_number} onChange={e => setBasicInfo({...basicInfo, reference_number: e.target.value})} />
+            <input type="text" placeholder="Optional" className="w-full p-2.5 border border-slate-200 rounded-lg text-sm" value={basicInfo.reference_number} onChange={e => setBasicInfo({ ...basicInfo, reference_number: e.target.value })} />
           </div>
         </div>
       </section>
@@ -403,22 +486,22 @@ export function EditQuotationPage() {
                 </button>
               )}
             </div>
-            
+
             <div className="p-6 grid grid-cols-1 md:grid-cols-3 gap-6">
               {/* Product Basic */}
               <div className="space-y-4 col-span-1 md:col-span-3">
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                   <div className="col-span-2">
                     <label className="block text-xs font-semibold text-slate-700 mb-1">Product Name</label>
-                    <input type="text" className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={p.product_name} onChange={e => setProducts(products.map(x => x.id === p.id ? {...x, product_name: e.target.value} : x))} />
+                    <input type="text" className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={p.product_name} onChange={e => setProducts(products.map(x => x.id === p.id ? { ...x, product_name: e.target.value } : x))} />
                   </div>
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 mb-1">Production Qty</label>
-                    <input type="number" className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={p.production_quantity} onChange={e => setProducts(products.map(x => x.id === p.id ? {...x, production_quantity: Number(e.target.value)} : x))} />
+                    <input type="number" className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={p.production_quantity} onChange={e => setProducts(products.map(x => x.id === p.id ? { ...x, production_quantity: Number(e.target.value) } : x))} />
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">Price / Value (Frontend only)</label>
-                    <input type="number" className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={p._frontend_price} onChange={e => setProducts(products.map(x => x.id === p.id ? {...x, _frontend_price: Number(e.target.value)} : x))} />
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Price / Value</label>
+                    <input type="number" className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={p._frontend_price} onChange={e => setProducts(products.map(x => x.id === p.id ? { ...x, _frontend_price: Number(e.target.value) } : x))} />
                   </div>
                 </div>
               </div>
@@ -426,11 +509,11 @@ export function EditQuotationPage() {
               {/* Material */}
               <div className="space-y-3">
                 <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider border-b pb-1">Material</h4>
-                <input type="text" placeholder="Material Type" className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={p.material_type} onChange={e => setProducts(products.map(x => x.id === p.id ? {...x, material_type: e.target.value} : x))} />
-                <input type="text" placeholder="Paper Type (e.g. Art Card)" className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={p.paper_type} onChange={e => setProducts(products.map(x => x.id === p.id ? {...x, paper_type: e.target.value} : x))} />
+                <input type="text" placeholder="Material Type" className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={p.material_type} onChange={e => setProducts(products.map(x => x.id === p.id ? { ...x, material_type: e.target.value } : x))} />
+                <input type="text" placeholder="Paper Type (e.g. Art Card)" className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={p.paper_type} onChange={e => setProducts(products.map(x => x.id === p.id ? { ...x, paper_type: e.target.value } : x))} />
                 <div className="flex gap-2">
-                  <input type="number" placeholder="GSM" className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={p.gsm || ""} onChange={e => setProducts(products.map(x => x.id === p.id ? {...x, gsm: Number(e.target.value)} : x))} />
-                  <input type="text" placeholder="Thickness" className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={p.thickness} onChange={e => setProducts(products.map(x => x.id === p.id ? {...x, thickness: e.target.value} : x))} />
+                  <input type="number" placeholder="GSM" className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={p.gsm || ""} onChange={e => setProducts(products.map(x => x.id === p.id ? { ...x, gsm: Number(e.target.value) } : x))} />
+                  <input type="text" placeholder="Thickness" className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={p.thickness} onChange={e => setProducts(products.map(x => x.id === p.id ? { ...x, thickness: e.target.value } : x))} />
                 </div>
               </div>
 
@@ -438,38 +521,39 @@ export function EditQuotationPage() {
               <div className="space-y-3">
                 <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider border-b pb-1">Dimensions (mm) & Print</h4>
                 <div className="flex gap-2">
-                  <input type="number" placeholder="W" className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={p.width_mm || ""} onChange={e => setProducts(products.map(x => x.id === p.id ? {...x, width_mm: Number(e.target.value)} : x))} />
-                  <input type="number" placeholder="H" className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={p.height_mm || ""} onChange={e => setProducts(products.map(x => x.id === p.id ? {...x, height_mm: Number(e.target.value)} : x))} />
-                  <input type="number" placeholder="D" className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={p.depth_mm || ""} onChange={e => setProducts(products.map(x => x.id === p.id ? {...x, depth_mm: Number(e.target.value)} : x))} />
+                  <input type="number" placeholder="W" className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={p.width_mm || ""} onChange={e => setProducts(products.map(x => x.id === p.id ? { ...x, width_mm: Number(e.target.value) } : x))} />
+                  <input type="number" placeholder="H" className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={p.height_mm || ""} onChange={e => setProducts(products.map(x => x.id === p.id ? { ...x, height_mm: Number(e.target.value) } : x))} />
+                  <input type="number" placeholder="D" className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={p.depth_mm || ""} onChange={e => setProducts(products.map(x => x.id === p.id ? { ...x, depth_mm: Number(e.target.value) } : x))} />
                 </div>
-                <select className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={p.printing_technology} onChange={e => setProducts(products.map(x => x.id === p.id ? {...x, printing_technology: e.target.value} : x))}>
+                <select className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={p.printing_technology} onChange={e => setProducts(products.map(x => x.id === p.id ? { ...x, printing_technology: e.target.value } : x))}>
                   <option value="Offset">Offset Printing</option>
                   <option value="Digital">Digital Printing</option>
                   <option value="Screen">Screen Printing</option>
                   <option value="Flexo">Flexography</option>
                 </select>
                 <div className="flex gap-2">
-                  <input type="number" placeholder="Front Col" className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={p.front_colors || ""} onChange={e => setProducts(products.map(x => x.id === p.id ? {...x, front_colors: Number(e.target.value)} : x))} title="Front Colors" />
-                  <input type="number" placeholder="Back Col" className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={p.back_colors || ""} onChange={e => setProducts(products.map(x => x.id === p.id ? {...x, back_colors: Number(e.target.value)} : x))} title="Back Colors" />
-                  <input type="number" placeholder="Spot Col" className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={p.spot_colors || ""} onChange={e => setProducts(products.map(x => x.id === p.id ? {...x, spot_colors: Number(e.target.value)} : x))} title="Spot Colors" />
+                  <input type="number" placeholder="Front Col" className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={p.front_colors || ""} onChange={e => setProducts(products.map(x => x.id === p.id ? { ...x, front_colors: Number(e.target.value) } : x))} title="Front Colors" />
+                  <input type="number" placeholder="Back Col" className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={p.back_colors || ""} onChange={e => setProducts(products.map(x => x.id === p.id ? { ...x, back_colors: Number(e.target.value) } : x))} title="Back Colors" />
+                  <input type="number" placeholder="Spot Col" className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={p.spot_colors || ""} onChange={e => setProducts(products.map(x => x.id === p.id ? { ...x, spot_colors: Number(e.target.value) } : x))} title="Spot Colors" />
                 </div>
               </div>
 
               {/* Finishing */}
               <div className="space-y-3">
                 <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider border-b pb-1">Finishing</h4>
-                <select className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={p.lamination} onChange={e => setProducts(products.map(x => x.id === p.id ? {...x, lamination: e.target.value} : x))}>
+                <select className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={p.lamination} onChange={e => setProducts(products.map(x => x.id === p.id ? { ...x, lamination: e.target.value } : x))}>
                   <option value="">No Lamination</option>
                   <option value="Gloss">Gloss</option>
                   <option value="Matte">Matte</option>
                   <option value="Soft Touch">Soft Touch</option>
                 </select>
                 <div className="grid grid-cols-2 gap-2 text-sm text-slate-700">
-                  <label className="flex items-center gap-2"><input type="checkbox" checked={p.uv_coating} onChange={e => setProducts(products.map(x => x.id === p.id ? {...x, uv_coating: e.target.checked} : x))} /> UV Coating</label>
-                  <label className="flex items-center gap-2"><input type="checkbox" checked={p.embossing} onChange={e => setProducts(products.map(x => x.id === p.id ? {...x, embossing: e.target.checked} : x))} /> Embossing</label>
-                  <label className="flex items-center gap-2"><input type="checkbox" checked={p.foiling} onChange={e => setProducts(products.map(x => x.id === p.id ? {...x, foiling: e.target.checked} : x))} /> Foiling</label>
-                  <label className="flex items-center gap-2"><input type="checkbox" checked={p.die_cutting} onChange={e => setProducts(products.map(x => x.id === p.id ? {...x, die_cutting: e.target.checked} : x))} /> Die Cutting</label>
+                  <label className="flex items-center gap-2"><input type="checkbox" checked={p.uv_coating} onChange={e => setProducts(products.map(x => x.id === p.id ? { ...x, uv_coating: e.target.checked } : x))} /> UV Coating</label>
+                  <label className="flex items-center gap-2"><input type="checkbox" checked={p.embossing} onChange={e => setProducts(products.map(x => x.id === p.id ? { ...x, embossing: e.target.checked } : x))} /> Embossing</label>
+                  <label className="flex items-center gap-2"><input type="checkbox" checked={p.foiling} onChange={e => setProducts(products.map(x => x.id === p.id ? { ...x, foiling: e.target.checked } : x))} /> Foiling</label>
+                  <label className="flex items-center gap-2"><input type="checkbox" checked={p.die_cutting} onChange={e => setProducts(products.map(x => x.id === p.id ? { ...x, die_cutting: e.target.checked } : x))} /> Die Cutting</label>
                 </div>
+                <input type="text" placeholder="Packaging Type" className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={p.packaging_type} onChange={e => setProducts(products.map(x => x.id === p.id ? { ...x, packaging_type: e.target.value } : x))} />
               </div>
             </div>
           </div>
@@ -485,30 +569,30 @@ export function EditQuotationPage() {
           <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">Payment Terms</label>
-              <input type="text" className="w-full p-2.5 border border-slate-200 rounded-lg text-sm" value={commercials.payment_terms} onChange={e => setCommercials({...commercials, payment_terms: e.target.value})} />
+              <input type="text" className="w-full p-2.5 border border-slate-200 rounded-lg text-sm" value={commercials.payment_terms} onChange={e => setCommercials({ ...commercials, payment_terms: e.target.value })} />
             </div>
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">Advance Percentage (%)</label>
-              <input type="number" className="w-full p-2.5 border border-slate-200 rounded-lg text-sm" value={commercials.advance_percentage} onChange={e => setCommercials({...commercials, advance_percentage: Number(e.target.value)})} />
+              <input type="number" className="w-full p-2.5 border border-slate-200 rounded-lg text-sm" value={commercials.advance_percentage} onChange={e => setCommercials({ ...commercials, advance_percentage: Number(e.target.value) })} />
             </div>
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">GST (%)</label>
-              <input type="number" className="w-full p-2.5 border border-slate-200 rounded-lg text-sm" value={commercials.gst_percentage} onChange={e => setCommercials({...commercials, gst_percentage: Number(e.target.value)})} />
+              <input type="number" className="w-full p-2.5 border border-slate-200 rounded-lg text-sm" value={commercials.gst_percentage} onChange={e => setCommercials({ ...commercials, gst_percentage: Number(e.target.value) })} />
             </div>
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">Discount Amount (₹)</label>
-              <input type="number" className="w-full p-2.5 border border-slate-200 rounded-lg text-sm" value={commercials.discount} onChange={e => setCommercials({...commercials, discount: Number(e.target.value)})} />
+              <input type="number" className="w-full p-2.5 border border-slate-200 rounded-lg text-sm" value={commercials.discount} onChange={e => setCommercials({ ...commercials, discount: Number(e.target.value) })} />
             </div>
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">Freight Charges (₹)</label>
-              <input type="number" className="w-full p-2.5 border border-slate-200 rounded-lg text-sm" value={commercials.freight_charges} onChange={e => setCommercials({...commercials, freight_charges: Number(e.target.value)})} />
+              <input type="number" className="w-full p-2.5 border border-slate-200 rounded-lg text-sm" value={commercials.freight_charges} onChange={e => setCommercials({ ...commercials, freight_charges: Number(e.target.value) })} />
             </div>
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">Other / Packing Charges (₹)</label>
-              <input type="number" className="w-full p-2.5 border border-slate-200 rounded-lg text-sm" value={commercials.packing_charges + commercials.other_charges} onChange={e => setCommercials({...commercials, other_charges: Number(e.target.value)})} />
+              <input type="number" className="w-full p-2.5 border border-slate-200 rounded-lg text-sm" value={commercials.other_charges} onChange={e => setCommercials({ ...commercials, other_charges: Number(e.target.value) })} />
             </div>
           </div>
-          
+
           <div className="bg-slate-50 p-5 rounded-xl border border-slate-100 space-y-3">
             <div className="flex justify-between text-sm text-slate-600">
               <span>Subtotal</span><span>₹{subtotal.toLocaleString()}</span>
@@ -541,19 +625,19 @@ export function EditQuotationPage() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div>
             <label className="block text-xs font-semibold text-amber-900 mb-1">Material Cost</label>
-            <input type="number" className="w-full p-2 border border-amber-200 rounded-lg text-sm bg-white" value={costSummary.material_cost} onChange={e => setCostSummary({...costSummary, material_cost: Number(e.target.value)})} />
+            <input type="number" className="w-full p-2 border border-amber-200 rounded-lg text-sm bg-white" value={costSummary.material_cost} onChange={e => setCostSummary({ ...costSummary, material_cost: Number(e.target.value) })} />
           </div>
           <div>
             <label className="block text-xs font-semibold text-amber-900 mb-1">Ink / Plate Cost</label>
-            <input type="number" className="w-full p-2 border border-amber-200 rounded-lg text-sm bg-white" value={costSummary.ink_cost + costSummary.plate_cost} onChange={e => setCostSummary({...costSummary, ink_cost: Number(e.target.value)})} />
+            <input type="number" className="w-full p-2 border border-amber-200 rounded-lg text-sm bg-white" value={costSummary.ink_cost + costSummary.plate_cost} onChange={e => setCostSummary({ ...costSummary, ink_cost: Number(e.target.value) })} />
           </div>
           <div>
             <label className="block text-xs font-semibold text-amber-900 mb-1">Machine & Labour Cost</label>
-            <input type="number" className="w-full p-2 border border-amber-200 rounded-lg text-sm bg-white" value={costSummary.machine_cost + costSummary.labour_cost} onChange={e => setCostSummary({...costSummary, machine_cost: Number(e.target.value)})} />
+            <input type="number" className="w-full p-2 border border-amber-200 rounded-lg text-sm bg-white" value={costSummary.machine_cost + costSummary.labour_cost} onChange={e => setCostSummary({ ...costSummary, machine_cost: Number(e.target.value) })} />
           </div>
           <div className="bg-amber-100 p-3 rounded-lg border border-amber-300">
-             <p className="text-xs font-bold text-amber-900 mb-1">Expected Margin</p>
-             <p className="text-lg font-black text-amber-700">{expectedProfitMargin}% (₹{expectedProfit.toLocaleString()})</p>
+            <p className="text-xs font-bold text-amber-900 mb-1">Expected Margin</p>
+            <p className="text-lg font-black text-amber-700">{expectedProfitMargin}% (₹{expectedProfit.toLocaleString()})</p>
           </div>
         </div>
       </section>
@@ -564,18 +648,18 @@ export function EditQuotationPage() {
           <h2 className="text-lg font-bold text-slate-800 mb-4">Sample Requirements</h2>
           <div className="space-y-4">
             <label className="flex items-center gap-2 text-sm font-semibold text-slate-700 cursor-pointer">
-              <input type="checkbox" className="w-4 h-4 text-indigo-600 rounded" checked={sampleReq.required} onChange={e => setSampleReq({...sampleReq, required: e.target.checked})} />
+              <input type="checkbox" className="w-4 h-4 text-indigo-600 rounded" checked={sampleReq.required} onChange={e => setSampleReq({ ...sampleReq, required: e.target.checked })} />
               Sample Required before Production?
             </label>
             {sampleReq.required && (
               <div className="grid grid-cols-2 gap-4 pt-2">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">Sample Qty</label>
-                  <input type="number" className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={sampleReq.quantity} onChange={e => setSampleReq({...sampleReq, quantity: Number(e.target.value)})} />
+                  <input type="number" className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={sampleReq.quantity} onChange={e => setSampleReq({ ...sampleReq, quantity: Number(e.target.value) })} />
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">Sample Cost (₹)</label>
-                  <input type="number" className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={sampleReq.cost} onChange={e => setSampleReq({...sampleReq, cost: Number(e.target.value)})} />
+                  <input type="number" className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={sampleReq.cost} onChange={e => setSampleReq({ ...sampleReq, cost: Number(e.target.value) })} />
                 </div>
               </div>
             )}
@@ -587,15 +671,15 @@ export function EditQuotationPage() {
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2">
               <label className="block text-xs font-semibold text-slate-700 mb-1">Delivery Address</label>
-              <input type="text" className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={delivery.address} onChange={e => setDelivery({...delivery, address: e.target.value})} />
+              <input type="text" className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={delivery.address} onChange={e => setDelivery({ ...delivery, address: e.target.value })} />
             </div>
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">Exp. Prod Start</label>
-              <input type="date" className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={delivery.expected_start} onChange={e => setDelivery({...delivery, expected_start: e.target.value})} />
+              <input type="date" className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={delivery.expected_start} onChange={e => setDelivery({ ...delivery, expected_start: e.target.value })} />
             </div>
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">Exp. Delivery</label>
-              <input type="date" className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={delivery.expected_delivery} onChange={e => setDelivery({...delivery, expected_delivery: e.target.value})} />
+              <input type="date" className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={delivery.expected_delivery} onChange={e => setDelivery({ ...delivery, expected_delivery: e.target.value })} />
             </div>
           </div>
         </section>
@@ -608,11 +692,11 @@ export function EditQuotationPage() {
           <div className="space-y-4">
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">Customer Notes (Visible on Quote)</label>
-              <textarea rows={2} className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={notes.customer_notes} onChange={e => setNotes({...notes, customer_notes: e.target.value})}></textarea>
+              <textarea rows={2} className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={notes.customer_notes} onChange={e => setNotes({ ...notes, customer_notes: e.target.value })}></textarea>
             </div>
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">Internal Notes (Hidden)</label>
-              <textarea rows={2} className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={notes.internal_notes} onChange={e => setNotes({...notes, internal_notes: e.target.value})}></textarea>
+              <textarea rows={2} className="w-full p-2 border border-slate-200 rounded-lg text-sm" value={notes.internal_notes} onChange={e => setNotes({ ...notes, internal_notes: e.target.value })}></textarea>
             </div>
           </div>
         </section>
@@ -620,9 +704,9 @@ export function EditQuotationPage() {
         <section className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
           <h2 className="text-lg font-bold text-slate-800 mb-4">Attachments</h2>
           <div className="border-2 border-dashed border-slate-300 rounded-xl p-8 flex flex-col items-center justify-center text-slate-500 bg-slate-50 hover:bg-slate-100 transition-colors cursor-pointer">
-             <FileUp size={24} className="mb-2 text-indigo-400" />
-             <p className="text-sm font-semibold">Upload Artwork & References</p>
-             <p className="text-xs">Drag and drop or click to browse</p>
+            <FileUp size={24} className="mb-2 text-indigo-400" />
+            <p className="text-sm font-semibold">Upload Artwork & References</p>
+            <p className="text-xs">Drag and drop or click to browse</p>
           </div>
         </section>
       </div>
@@ -655,21 +739,25 @@ export function EditQuotationPage() {
 
       {/* 10. Actions Footer (Sticky) */}
       <div className="fixed bottom-0 left-0 lg:left-60 right-0 bg-white border-t border-slate-200 p-4 px-8 flex justify-between items-center z-40 shadow-[0_-4px_12px_rgba(0,0,0,0.05)]">
-         <div className="flex items-center gap-2 text-sm text-slate-500 font-medium hidden sm:flex">
-           <Info size={16} /> Ensure commercial details are accurate.
-         </div>
-         <div className="flex gap-3">
-           <button 
-             onClick={() => handleSave('Draft')} disabled={loading}
-             className="px-5 py-2.5 rounded-lg text-sm font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors">
-             Save as Draft
-           </button>
-           <button 
-             onClick={() => handleSave('Approved')} disabled={loading}
-             className="flex items-center gap-2 px-6 py-2.5 rounded-lg text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700 transition-colors shadow-sm">
-             <Save size={16} /> Save & Mark Approved
-           </button>
-         </div>
+        <div className="flex items-center gap-2 text-sm text-slate-500 font-medium hidden sm:flex">
+          <Info size={16} /> Ensure commercial details are accurate.
+        </div>
+        <div className="flex gap-3">
+          <button
+            onClick={() => handleSave('Draft')}
+            disabled={loading}
+            className="px-5 py-2.5 rounded-lg text-sm font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors"
+          >
+            Save as Draft
+          </button>
+          <button
+            onClick={() => handleSave('Approved')}
+            disabled={loading}
+            className="flex items-center gap-2 px-6 py-2.5 rounded-lg text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700 transition-colors shadow-sm"
+          >
+            <Save size={16} /> Save & Update
+          </button>
+        </div>
       </div>
     </div>
   );

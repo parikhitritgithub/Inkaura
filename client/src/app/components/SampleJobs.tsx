@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { QuotationViewModal } from "../components/QuotationViewModal";
 import {
   Search, Plus, Calendar, User, Clock, CheckCircle, X,
   FileText, Eye, RefreshCw, AlertTriangle, FlaskConical, Factory,
@@ -93,6 +94,10 @@ export function SampleJobs() {
   const [employees, setEmployees] = useState<{ id: number; name: string; role: string }[]>([]);
   const [machines, setMachines] = useState<{ id: number; name: string; type: string; status: string }[]>([]);
   const [loadingDropdowns, setLoadingDropdowns] = useState(false);
+
+  // State for Quotation View Modal
+  const [showQuotationView, setShowQuotationView] = useState(false);
+  const [viewQuotationId, setViewQuotationId] = useState<string | null>(null);
 
   // Load sample jobs
   const loadSampleJobs = async () => {
@@ -325,7 +330,7 @@ export function SampleJobs() {
                 >
                   <option value="0">Select Machine</option>
                   {machines
-                    .filter(m => m.status === 'Active' || m.status === 'Setup') // Only show Active and Setup machines
+                    .filter(m => m.status === 'Active' || m.status === 'Setup')
                     .map((machine) => (
                       <option key={machine.id} value={machine.id}>
                         {machine.name} {machine.type ? `(${machine.type})` : ''}
@@ -553,6 +558,17 @@ export function SampleJobs() {
                     </div>
                   )}
 
+                  {/* View Quote Button - Shows for all job types */}
+                  <button
+                    onClick={() => {
+                      setViewQuotationId(job.quotationId);
+                      setShowQuotationView(true);
+                    }}
+                    className="flex-1 flex items-center justify-center gap-1 px-3 py-2 text-xs bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 transition-colors font-medium"
+                  >
+                    <Eye size={14} /> View Quote
+                  </button>
+
                   {isAwaitingApproval ? (
                     <>
                       <button
@@ -596,7 +612,7 @@ export function SampleJobs() {
                       }}
                       className="w-full flex items-center justify-center gap-1 px-3 py-2 text-xs bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 transition-colors font-medium"
                     >
-                      <Eye size={14} /> View Details
+
                     </button>
                   ) : (
                     <button
@@ -605,7 +621,7 @@ export function SampleJobs() {
                       }}
                       className="w-full flex items-center justify-center gap-1 px-3 py-2 text-xs bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 transition-colors font-medium"
                     >
-                      <Eye size={14} /> View Details
+
                     </button>
                   )}
                 </div>
@@ -665,6 +681,17 @@ export function SampleJobs() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Quotation View Modal */}
+      {showQuotationView && viewQuotationId && (
+        <QuotationViewModal
+          quotationId={viewQuotationId}
+          onClose={() => {
+            setShowQuotationView(false);
+            setViewQuotationId(null);
+          }}
+        />
       )}
     </div>
   );
