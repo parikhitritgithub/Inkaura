@@ -192,6 +192,8 @@ CREATE INDEX idx_payments_type ON payments(payment_type);
 
 ALTER TABLE payments ENABLE ROW LEVEL SECURITY;
 
+-- Fix any casing issues from older inserts
+UPDATE payments SET payment_type = 'Advance' WHERE payment_type = 'advance';
 CREATE POLICY "payments_select" ON payments FOR SELECT TO authenticated USING (true);
 CREATE POLICY "payments_insert" ON payments FOR INSERT TO authenticated WITH CHECK (true);
 CREATE POLICY "payments_update" ON payments FOR UPDATE TO authenticated USING (true) WITH CHECK (true);

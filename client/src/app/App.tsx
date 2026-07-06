@@ -58,8 +58,7 @@ export default function App() {
             <Route path="/packaging"           element={<PackagingDashboard />} />
             <Route path="/inventory"           element={<InventoryManagement />} />
             <Route path="/dispatch"            element={<DispatchDashboard />} />
-            <Route path="/finance"             element={<FinanceDashboard />} />
-            <Route path="/reports"             element={<div className="p-8 text-center text-slate-500">Reports coming soon</div>} />
+            <Route path="/report"              element={<FinanceDashboard />} />
           </Routes>
         </Layout>
       )}
