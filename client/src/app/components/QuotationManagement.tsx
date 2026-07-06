@@ -237,7 +237,7 @@ function QuotationDetail({ quotation: q, onClose, onUpdate }: QuotationDetailPro
         .insert([{
           payment_id: parseInt(paymentId.replace('PAY-', '')), // payment_id is integer
           quotation_id: q.id, // quotation_id is NOT NULL
-          payment_type: 'advance', // payment_type is NOT NULL
+          payment_type: 'Advance', // payment_type is NOT NULL
           amount: advancePayment.amount,
           payment_date: advancePayment.date,
           payment_method: advancePayment.method,
