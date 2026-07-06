@@ -50,6 +50,7 @@ interface InventoryItem {
 interface QualityCheckReport {
   qc_id: number;
   production_order_id: string;
+  sample_order_id?: string;
   check_type: string;
   check_date: string;
   checked_by_name: string;
@@ -69,6 +70,7 @@ interface QualityCheckReport {
   created_at: string;
   customer_name: string;
   product_name: string;
+  job_type?: 'Production' | 'Sample';
 }
 
 interface JobCardProps {
@@ -114,18 +116,25 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
   // Fetch QC report when job status is "Rework Required" or "Failed"
   useEffect(() => {
     const fetchQCReport = async () => {
-      if (isReworkRequired && isProduction) {
+      if (isReworkRequired) {
         setLoadingReport(true);
         try {
-          const { data: qcData, error: qcError } = await supabase
+          let query = supabase
             .from('quality_checks')
             .select(`
               *,
               checked_by_emp:checked_by (full_name)
             `)
-            .eq('production_order_id', job.id)
             .order('created_at', { ascending: false })
             .limit(1);
+
+          if (isProduction) {
+            query = query.eq('production_order_id', job.id);
+          } else if (isSample) {
+            query = query.eq('sample_order_id', job.id);
+          }
+
+          const { data: qcData, error: qcError } = await query;
 
           if (qcError) {
             console.error('Error fetching QC report:', qcError);
@@ -138,6 +147,7 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
             setQcReport({
               qc_id: qc.qc_id,
               production_order_id: qc.production_order_id,
+              sample_order_id: qc.sample_order_id,
               check_type: qc.check_type || 'N/A',
               check_date: qc.check_date || qc.created_at,
               checked_by_name: qc.checked_by_emp?.full_name || 'QC Team',
@@ -156,7 +166,8 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
               notes: qc.notes,
               created_at: qc.created_at,
               customer_name: job.customer || 'Unknown',
-              product_name: job.product || 'Unknown'
+              product_name: job.product || 'Unknown',
+              job_type: isSample ? 'Sample' : 'Production'
             });
           }
         } catch (err) {
@@ -168,7 +179,7 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
     };
 
     fetchQCReport();
-  }, [job.id, isReworkRequired, isProduction]);
+  }, [job.id, isReworkRequired, isProduction, isSample]);
 
   const handleStartWork = async () => {
     try {
@@ -320,7 +331,6 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
       setMaterialNote("");
       setShowMaterialModal(false);
 
-      // IMPORTANT: Refresh inventory and jobs to reflect changes
       onInventoryUpdate();
       onStatusUpdate();
 
@@ -369,7 +379,7 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
             job_id: job.id,
             job_type: job.type,
             activity_type: 'completed',
-            reason: 'Production completed - sent to QC',
+            reason: 'Production completed - sent for QC',
             notes: doneNote || 'Production work completed',
             timestamp: new Date().toISOString()
           }]);
@@ -388,24 +398,39 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
   };
 
   const handleMarkComplete = async () => {
-    if (isReworkRequired && isProduction) {
+    if (isReworkRequired) {
+      // Fetch QC report if not already loaded
       if (!qcReport) {
         try {
-          const { data } = await supabase
+          let query = supabase
             .from('quality_checks')
             .select(`
               *,
               checked_by_emp:checked_by (full_name)
             `)
-            .eq('production_order_id', job.id)
             .order('created_at', { ascending: false })
             .limit(1);
+
+          if (isProduction) {
+            query = query.eq('production_order_id', job.id);
+          } else if (isSample) {
+            query = query.eq('sample_order_id', job.id);
+          }
+
+          const { data, error } = await query;
+
+          if (error) {
+            console.error('Error fetching QC report:', error);
+            alert('Failed to load QC report. Please try again.');
+            return;
+          }
 
           if (data && data.length > 0) {
             const qc = data[0];
             setQcReport({
               qc_id: qc.qc_id,
               production_order_id: qc.production_order_id,
+              sample_order_id: qc.sample_order_id,
               check_type: qc.check_type || 'N/A',
               check_date: qc.check_date || qc.created_at,
               checked_by_name: qc.checked_by_emp?.full_name || 'QC Team',
@@ -424,13 +449,19 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
               notes: qc.notes,
               created_at: qc.created_at,
               customer_name: job.customer || 'Unknown',
-              product_name: job.product || 'Unknown'
+              product_name: job.product || 'Unknown',
+              job_type: isSample ? 'Sample' : 'Production'
             });
             setShowQCReportModal(true);
+            return;
+          } else {
+            alert('No QC report available for this job. Please check with your supervisor.');
             return;
           }
         } catch (err) {
           console.error('Failed to fetch QC report:', err);
+          alert('Failed to load QC report. Please try again.');
+          return;
         }
       }
 
@@ -446,24 +477,45 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
     try {
       setUpdating(true);
 
-      await supabase
-        .from('production_orders')
-        .update({
-          status: 'In Progress',
-          progress: 0
-        })
-        .eq('production_order_id', job.id);
+      if (isSample) {
+        await supabase
+          .from('sample_orders')
+          .update({
+            status: 'In Progress',
+            progress: 0
+          })
+          .eq('sample_order_id', job.id);
 
-      await supabase
-        .from('job_activity_logs')
-        .insert([{
-          job_id: job.id,
-          job_type: job.type,
-          activity_type: 'rework_started',
-          reason: 'Rework started after QC feedback',
-          notes: reworkNote || 'Rework initiated',
-          timestamp: new Date().toISOString()
-        }]);
+        await supabase
+          .from('job_activity_logs')
+          .insert([{
+            job_id: job.id,
+            job_type: job.type,
+            activity_type: 'rework_started',
+            reason: 'Rework started after QC feedback',
+            notes: reworkNote || 'Rework initiated',
+            timestamp: new Date().toISOString()
+          }]);
+      } else {
+        await supabase
+          .from('production_orders')
+          .update({
+            status: 'In Progress',
+            progress: 0
+          })
+          .eq('production_order_id', job.id);
+
+        await supabase
+          .from('job_activity_logs')
+          .insert([{
+            job_id: job.id,
+            job_type: job.type,
+            activity_type: 'rework_started',
+            reason: 'Rework started after QC feedback',
+            notes: reworkNote || 'Rework initiated',
+            timestamp: new Date().toISOString()
+          }]);
+      }
 
       setShowQCReportModal(false);
       setReworkNote("");
@@ -570,10 +622,14 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
               </div>
 
               <p className="text-sm text-slate-500 mb-4">
-                {qcReport.production_order_id} · {qcReport.customer_name}
+                {qcReport.production_order_id || qcReport.sample_order_id} · {qcReport.customer_name}
+                {qcReport.job_type === 'Sample' && (
+                  <span className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-amber-50 text-amber-700 border border-amber-200">
+                    <FlaskConical size={10} /> Sample
+                  </span>
+                )}
               </p>
 
-              {/* Job Info */}
               <div className="grid grid-cols-3 gap-3 text-xs mb-4">
                 <div className="bg-slate-50 rounded-lg p-2.5">
                   <p className="text-slate-400 mb-0.5">Product</p>
@@ -603,7 +659,6 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
                 </div>
               </div>
 
-              {/* Quality Ratings */}
               <div className="mb-4">
                 <p className="text-xs font-semibold text-slate-700 mb-2">Quality Ratings</p>
                 <div className="grid grid-cols-2 gap-2">
@@ -623,7 +678,6 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
                 </div>
               </div>
 
-              {/* Defects */}
               {(qcReport.defect_description || qcReport.defect_quantity > 0) && (
                 <div className="p-3 bg-red-50 border border-red-100 rounded-lg mb-4 space-y-1.5">
                   <p className="text-xs font-semibold text-red-800">Defects Found</p>
@@ -639,7 +693,6 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
                 </div>
               )}
 
-              {/* Rework Instructions */}
               {qcReport.rework_description && (
                 <div className="p-3 bg-orange-50 border border-orange-100 rounded-lg mb-4">
                   <p className="text-xs font-semibold text-orange-800 mb-1">Rework Instructions</p>
@@ -647,7 +700,6 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
                 </div>
               )}
 
-              {/* Notes */}
               {qcReport.notes && (
                 <div className="p-3 bg-slate-50 border border-slate-100 rounded-lg mb-4">
                   <p className="text-xs font-semibold text-slate-700 mb-1">Inspector Notes</p>
@@ -979,28 +1031,42 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
           </div>
         ) : (
           <div className="flex flex-wrap gap-2">
-            {/* Show "View QC Report" button for rework jobs */}
+            {/* View QC Report button - shows for BOTH sample and production when rework required */}
             {isReworkRequired && (
               <button
                 onClick={() => {
                   if (!qcReport) {
                     const fetchReport = async () => {
                       try {
-                        const { data } = await supabase
+                        let query = supabase
                           .from('quality_checks')
                           .select(`
                             *,
                             checked_by_emp:checked_by (full_name)
                           `)
-                          .eq('production_order_id', job.id)
                           .order('created_at', { ascending: false })
                           .limit(1);
+
+                        if (isProduction) {
+                          query = query.eq('production_order_id', job.id);
+                        } else if (isSample) {
+                          query = query.eq('sample_order_id', job.id);
+                        }
+
+                        const { data, error } = await query;
+
+                        if (error) {
+                          console.error('Error fetching QC report:', error);
+                          alert('Failed to load QC report. Please try again.');
+                          return;
+                        }
 
                         if (data && data.length > 0) {
                           const qc = data[0];
                           setQcReport({
                             qc_id: qc.qc_id,
                             production_order_id: qc.production_order_id,
+                            sample_order_id: qc.sample_order_id,
                             check_type: qc.check_type || 'N/A',
                             check_date: qc.check_date || qc.created_at,
                             checked_by_name: qc.checked_by_emp?.full_name || 'QC Team',
@@ -1019,7 +1085,8 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
                             notes: qc.notes,
                             created_at: qc.created_at,
                             customer_name: job.customer || 'Unknown',
-                            product_name: job.product || 'Unknown'
+                            product_name: job.product || 'Unknown',
+                            job_type: isSample ? 'Sample' : 'Production'
                           });
                           setShowQCReportModal(true);
                         } else {
@@ -1043,7 +1110,7 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
               </button>
             )}
 
-            {/* Show "Start" button for non-rework jobs that are Pending or In Progress */}
+            {/* Pause/Start button - for both sample and production */}
             {(job.status === "Pending" || job.status === "In Progress") && !isReworkRequired && (
               <button
                 onClick={running ? () => setShowPauseModal(true) : handleStartWork}
@@ -1061,7 +1128,7 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
               </button>
             )}
 
-            {/* Material button - only when running */}
+            {/* Material button - for both sample and production when running */}
             {running && (
               <button
                 onClick={() => setShowMaterialModal(true)}
@@ -1073,15 +1140,14 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
               </button>
             )}
 
-            {/* Send to QC / Done button */}
+            {/* Issue + Send to QC buttons - for both sample and production */}
             {(job.status === "In Progress" || job.status === "Pending" || job.status === "Rework Required") &&
-              !isSample &&
-              !(job.status === "QC Pending") &&
-              !(job.status === "Completed") &&
-              !(job.status === "Dispatched") &&
-              !(job.status === "Approved") &&
-              !(job.status === "Production Created") &&
-              !(job.status === "Awaiting Approval") && (
+              job.status !== "QC Pending" &&
+              job.status !== "Completed" &&
+              job.status !== "Dispatched" &&
+              job.status !== "Approved" &&
+              job.status !== "Production Created" &&
+              job.status !== "Awaiting Approval" && (
                 <>
                   <button
                     onClick={() => setShowIssue(true)}
@@ -1109,35 +1175,14 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
                 </>
               )}
 
-            {/* For sample jobs - show Done button */}
-            {isSample &&
-              job.status !== "QC Pending" &&
-              job.status !== "Awaiting Approval" &&
-              job.status !== "Production Created" &&
-              job.status !== "Completed" &&
-              job.status !== "Approved" && (
-                <button
-                  onClick={handleMarkComplete}
-                  disabled={updating}
-                  className="px-3 py-2 rounded-lg text-xs text-green-700 border border-green-200 bg-green-50 hover:bg-green-100 transition-colors flex items-center gap-1 disabled:opacity-50"
-                  style={{ fontWeight: 500 }}
-                >
-                  {updating ? (
-                    <div className="w-4 h-4 border-2 border-green-700 border-t-transparent rounded-full animate-spin" />
-                  ) : (
-                    <><CheckCircle size={13} /> Send to QC</>
-                  )}
-                </button>
-              )}
-
-            {/* QC Pending status indicator */}
+            {/* QC Pending status indicator - for both sample and production */}
             {job.status === "QC Pending" && (
               <div className="flex-1 text-center py-2 px-3 rounded-lg text-xs bg-amber-50 text-amber-700 border border-amber-200">
                 🔍 In Quality Control - Awaiting Inspection
               </div>
             )}
 
-            {/* Sample awaiting approval */}
+            {/* Awaiting Approval - for sample jobs */}
             {isSample && job.status === "Awaiting Approval" && (
               <div className="flex-1 text-center py-2 px-3 rounded-lg text-xs bg-yellow-50 text-yellow-700 border border-yellow-200">
                 ⏳ Sent to Supervisor
@@ -1151,7 +1196,14 @@ function JobCard({ job, onStatusUpdate, inventoryItems, onInventoryUpdate, curre
               </div>
             )}
 
-            {/* Rework required helper message */}
+            {/* Sample approved */}
+            {isSample && job.status === "Approved" && (
+              <div className="flex-1 text-center py-2 px-3 rounded-lg text-xs bg-green-50 text-green-700 border border-green-200">
+                ✅ Sample Approved
+              </div>
+            )}
+
+            {/* Rework required helper message - for both sample and production */}
             {isReworkRequired && (
               <div className="w-full text-center py-1.5 px-3 rounded-lg text-xs bg-red-50 text-red-600 border border-red-200">
                 ⚠️ After rework, click "Send to QC (Rework)" above
