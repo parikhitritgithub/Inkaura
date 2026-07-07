@@ -365,37 +365,27 @@ const safeProductName = (name: string | null | undefined): string => {
 
 // ─── Log workflow activity ────────────────────────────────────
 export const logWorkflowActivity = async (
-  jobType:  'sample' | 'production',
-  jobId:    string,
-  activity: string,
-  remarks?: string,
-  qcId?:    number,
+    jobType:     'sample' | 'production',
+    jobId:       string,
+    activity:    string,
+    remarks?:    string,
+    qcId?:       number,
 ): Promise<void> => {
-  // This function must NEVER throw
-  // A logging failure should never block the main workflow
-  try {
-    const empId = await getCurrentEmployeeId();
-
-    const { error } = await supabase
-      .from('workflow_activity_log')
-      .insert([{
-        job_type:     jobType,
-        job_id:       jobId,
-        qc_id:        qcId    || null,
-        activity,
-        performed_by: empId,
-        remarks:      remarks || null,
-        created_at:   new Date().toISOString(),
-      }]);
-
-    if (error) {
-      // Log to console but do not throw
-      console.warn('Activity log insert failed (non-fatal):', error.message);
+    try {
+        const empId = await getCurrentEmployeeId();
+        await supabase.from('workflow_activity_log').insert([{
+            job_type:     jobType,
+            job_id:       jobId,
+            qc_id:        qcId   || null,
+            activity,
+            performed_by: empId,
+            remarks:      remarks || null,
+            created_at:   new Date().toISOString(),
+        }]);
+    } catch (err) {
+        // Never block the main workflow for logging failures
+        console.warn('Activity log failed (non-fatal):', err);
     }
-  } catch (err) {
-    // Catch everything — logging must never crash the app
-    console.warn('Activity log failed (non-fatal):', err);
-  }
 };
 
 // ─── Update job status helper ─────────────────────────────────

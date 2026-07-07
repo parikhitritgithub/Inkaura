@@ -13,7 +13,7 @@ import { InventoryManagement } from "./components/InventoryManagement";
 import { MachineOperator } from "./components/MachineOperator";
 import { QualityControl } from "./components/QualityControl";
 import { DispatchDashboard } from "./components/DispatchDashboard";
-import { FinanceDashboard } from "./components/FinanceDashboard";
+import { ReportsDashboard } from "./components/ReportsDashboard";
 import { MachineManagement } from "./components/MachineManagement";
 import { ProductionDashboard } from "./components/ProductionDashboard";
 import { PackagingDashboard } from "./components/PackagingDashboard";
@@ -58,8 +58,7 @@ export default function App() {
             <Route path="/packaging"           element={<PackagingDashboard />} />
             <Route path="/inventory"           element={<InventoryManagement />} />
             <Route path="/dispatch"            element={<DispatchDashboard />} />
-            <Route path="/finance"             element={<FinanceDashboard />} />
-            <Route path="/reports"             element={<div className="p-8 text-center text-slate-500">Reports coming soon</div>} />
+            <Route path="/report"              element={<ReportsDashboard />} />
           </Routes>
         </Layout>
       )}
