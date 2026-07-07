@@ -16,96 +16,81 @@ import {
   PostDevChecklist,
   hasQCSubmitRole,
   hasQCApproveRole,
+  supabase,
 } from "../server/api";
 
 // ─── Constants ────────────────────────────────────────────────
-const RATINGS = ["Excellent", "Good", "Fair", "Poor", "NA"] as const;
-
+const RATINGS     = ["Excellent", "Good", "Fair", "Poor", "NA"] as const;
 const CHECK_TYPES = [
   "Pre-Press",
   "During Production",
   "Post Production",
   "Final",
 ] as const;
-
 const DEFECT_TYPES = [
-  "Color Mismatch",
-  "Misregistration",
-  "Hickeys / Spots",
-  "Lamination Defect",
-  "Cutting Error",
-  "Barcode Issue",
-  "Text Error",
-  "Quantity Shortage",
-  "Scratches / Scuffs",
-  "Binding Defect",
-  "Other",
+  "Color Mismatch", "Misregistration", "Hickeys / Spots",
+  "Lamination Defect", "Cutting Error", "Barcode Issue",
+  "Text Error", "Quantity Shortage", "Scratches / Scuffs",
+  "Binding Defect", "Other",
 ];
-
 const CHECKLIST = [
-  { id: "color_accuracy", label: "Color density matches approved proof (±0.05 D)", category: "Color", field: "color_accuracy" },
-  { id: "print_quality", label: "No visible hickeys, spots, or mottling", category: "Print Quality", field: "print_quality" },
-  { id: "material_quality", label: "Material quality meets specification", category: "Material", field: "material_quality" },
-  { id: "dimensional_accuracy", label: "Cutting/die size within ±0.5mm tolerance", category: "Dimensions", field: "dimensional_accuracy" },
-  { id: "finishing_quality", label: "Lamination — no bubbles, wrinkles, or peeling", category: "Finishing", field: "finishing_quality" },
-  { id: "binding_quality", label: "Binding quality meets specification", category: "Binding", field: "binding_quality" },
+  { id: "color_accuracy",       label: "Color density matches approved proof (±0.05 D)", category: "Color",        field: "color_accuracy"       },
+  { id: "print_quality",        label: "No visible hickeys, spots, or mottling",          category: "Print Quality", field: "print_quality"        },
+  { id: "material_quality",     label: "Material quality meets specification",            category: "Material",     field: "material_quality"     },
+  { id: "dimensional_accuracy", label: "Cutting/die size within ±0.5mm tolerance",       category: "Dimensions",   field: "dimensional_accuracy" },
+  { id: "finishing_quality",    label: "Lamination — no bubbles, wrinkles, or peeling",  category: "Finishing",    field: "finishing_quality"    },
+  { id: "binding_quality",      label: "Binding quality meets specification",             category: "Binding",      field: "binding_quality"      },
 ] as const;
 
-// ─── Post Development Checklist Items (from physical form) ────
 const POST_DEV_CHECKLIST_ITEMS: {
-  id: keyof Omit<PostDevChecklist, 'checker_notes' | 'carton_type'>;
+  id: keyof Omit<PostDevChecklist, "checker_notes" | "carton_type">;
   label: string;
   category: string;
 }[] = [
-    { id: "client_approval_present", label: "Presence of Client Approval of Artwork", category: "Documentation" },
-    { id: "punching_registration", label: "Check Punching Registration on every carton", category: "Registration" },
-    { id: "printing_defects_check", label: "Check for printing defects (color consistency, registration, etc.)", category: "Print Quality" },
-    { id: "finishing_correct", label: "Confirm correct finishing (lamination, varnish, foil, embossing, etc.)", category: "Finishing" },
-    { id: "cutting_folding_binding", label: "Ensure proper cutting, folding, and binding (if applicable)", category: "Cutting" },
-    { id: "product_count_verified", label: "Verify product count against job order", category: "Counting" },
-    { id: "carton_pasting_direction", label: "Carton pasting direction", category: "Assembly" },
-    { id: "alignment_precision", label: "Check alignment and precision of final trims", category: "Trimming" },
-    { id: "excess_paper_removed", label: "Remove any excess paper or edges", category: "Cleanup" },
-    { id: "clean_smooth_edges", label: "Ensure clean and smooth edges", category: "Finishing" },
-    { id: "correct_labels_applied", label: "Apply correct labels (barcodes, batch numbers, job IDs)", category: "Labeling" },
-    { id: "legal_compliance_markings", label: "Include necessary legal or compliance markings", category: "Compliance" },
-  ];
-
+  { id: "client_approval_present",   label: "Presence of Client Approval of Artwork",                              category: "Documentation" },
+  { id: "punching_registration",     label: "Check Punching Registration on every carton",                         category: "Registration"  },
+  { id: "printing_defects_check",    label: "Check for printing defects (color consistency, registration, etc.)",  category: "Print Quality" },
+  { id: "finishing_correct",         label: "Confirm correct finishing (lamination, varnish, foil, embossing)",    category: "Finishing"     },
+  { id: "cutting_folding_binding",   label: "Ensure proper cutting, folding, and binding (if applicable)",         category: "Cutting"       },
+  { id: "product_count_verified",    label: "Verify product count against job order",                              category: "Counting"      },
+  { id: "carton_pasting_direction",  label: "Carton pasting direction",                                            category: "Assembly"      },
+  { id: "alignment_precision",       label: "Check alignment and precision of final trims",                        category: "Trimming"      },
+  { id: "excess_paper_removed",      label: "Remove any excess paper or edges",                                    category: "Cleanup"       },
+  { id: "clean_smooth_edges",        label: "Ensure clean and smooth edges",                                       category: "Finishing"     },
+  { id: "correct_labels_applied",    label: "Apply correct labels (barcodes, batch numbers, job IDs)",             category: "Labeling"      },
+  { id: "legal_compliance_markings", label: "Include necessary legal or compliance markings",                      category: "Compliance"    },
+];
 const CARTON_TYPES = ["RTI", "STI", "CLB", "SLB"] as const;
-
 const DEFAULT_CHECKLIST: PostDevChecklist = {
-  client_approval_present: false,
-  carton_type: "",
-  punching_registration: false,
-  printing_defects_check: false,
-  finishing_correct: false,
-  cutting_folding_binding: false,
-  product_count_verified: false,
-  carton_pasting_direction: false,
-  alignment_precision: false,
-  excess_paper_removed: false,
-  clean_smooth_edges: false,
-  correct_labels_applied: false,
+  client_approval_present:   false,
+  carton_type:               "",
+  punching_registration:     false,
+  printing_defects_check:    false,
+  finishing_correct:         false,
+  cutting_folding_binding:   false,
+  product_count_verified:    false,
+  carton_pasting_direction:  false,
+  alignment_precision:       false,
+  excess_paper_removed:      false,
+  clean_smooth_edges:        false,
+  correct_labels_applied:    false,
   legal_compliance_markings: false,
-  checker_notes: "",
+  checker_notes:             "",
 };
 
-// ─── Role helpers — use case-insensitive functions from api ───
-const canSubmitQC = (role: string) => hasQCSubmitRole(role);
+const canSubmitQC  = (role: string) => hasQCSubmitRole(role);
 const canApproveQC = (role: string) => hasQCApproveRole(role);
-
-// Human-readable role labels for display
-const SUBMIT_ROLE_LABELS = ["Admin", "Supervisor", "QC", "Quality"];
+const SUBMIT_ROLE_LABELS  = ["Admin", "Supervisor", "QC", "Quality"];
 const APPROVE_ROLE_LABELS = ["Admin", "Supervisor"];
 
-// ─── Rating Badge ─────────────────────────────────────────────
+// ─── Small UI helpers ─────────────────────────────────────────
 function RatingBadge({ rating }: { rating: string }) {
   const map: Record<string, string> = {
     Excellent: "bg-green-100 text-green-700 border-green-200",
-    Good: "bg-blue-100 text-blue-700 border-blue-200",
-    Fair: "bg-amber-100 text-amber-700 border-amber-200",
-    Poor: "bg-red-100 text-red-700 border-red-200",
-    NA: "bg-slate-100 text-slate-500 border-slate-200",
+    Good:      "bg-blue-100 text-blue-700 border-blue-200",
+    Fair:      "bg-amber-100 text-amber-700 border-amber-200",
+    Poor:      "bg-red-100 text-red-700 border-red-200",
+    NA:        "bg-slate-100 text-slate-500 border-slate-200",
   };
   return (
     <span className={`inline-flex px-2 py-0.5 rounded border text-xs font-medium ${map[rating] ?? map.NA}`}>
@@ -114,21 +99,24 @@ function RatingBadge({ rating }: { rating: string }) {
   );
 }
 
-// ─── Status Badge ─────────────────────────────────────────────
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, string> = {
-    Passed: "bg-green-50 text-green-700 border-green-200",
-    Failed: "bg-red-50 text-red-700 border-red-200",
-    Pending: "bg-amber-50 text-amber-700 border-amber-200",
-    Rework: "bg-orange-50 text-orange-700 border-orange-200",
+    Passed:              "bg-green-50 text-green-700 border-green-200",
+    Failed:              "bg-red-50 text-red-700 border-red-200",
+    Pending:             "bg-amber-50 text-amber-700 border-amber-200",
+    Rework:              "bg-orange-50 text-orange-700 border-orange-200",
+    "Rework Required":   "bg-orange-50 text-orange-700 border-orange-200",
     "Awaiting Approval": "bg-blue-50 text-blue-700 border-blue-200",
+    Approved:            "bg-green-50 text-green-700 border-green-200",
   };
   const icons: Record<string, React.ReactNode> = {
-    Passed: <CheckCircle size={11} />,
-    Failed: <XCircle size={11} />,
-    Pending: <Clock size={11} />,
-    Rework: <RotateCcw size={11} />,
+    Passed:              <CheckCircle size={11} />,
+    Failed:              <XCircle size={11} />,
+    Pending:             <Clock size={11} />,
+    Rework:              <RotateCcw size={11} />,
+    "Rework Required":   <RotateCcw size={11} />,
     "Awaiting Approval": <ShieldCheck size={11} />,
+    Approved:            <CheckCircle size={11} />,
   };
   return (
     <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border text-xs font-medium ${map[status] ?? map.Pending}`}>
@@ -137,18 +125,14 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-// ─── Role Badge — handles any case ───────────────────────────
 function RoleBadge({ role }: { role: string }) {
-  const roleLower = role.toLowerCase();
+  const r = role.toLowerCase();
   let style = "bg-slate-100 text-slate-600";
-
-  if (roleLower === "admin") style = "bg-red-100 text-red-700";
-  else if (roleLower === "supervisor") style = "bg-purple-100 text-purple-700";
-  else if (roleLower === "qc" || roleLower === "quality" || roleLower === "qc_team") style = "bg-blue-100 text-blue-700";
-  else if (roleLower === "operator") style = "bg-slate-100 text-slate-600";
-  else if (roleLower === "sales" || roleLower === "sales_executive") style = "bg-green-100 text-green-700";
-  else if (roleLower === "finance") style = "bg-orange-100 text-orange-700";
-
+  if (r === "admin")                                                      style = "bg-red-100 text-red-700";
+  else if (r === "supervisor")                                            style = "bg-purple-100 text-purple-700";
+  else if (r === "qc" || r === "quality" || r === "qc_team")             style = "bg-blue-100 text-blue-700";
+  else if (r === "sales" || r === "sales_executive")                      style = "bg-green-100 text-green-700";
+  else if (r === "finance")                                               style = "bg-orange-100 text-orange-700";
   return (
     <span className={`inline-flex px-2 py-0.5 rounded text-xs font-semibold ${style}`}>
       {role}
@@ -156,29 +140,8 @@ function RoleBadge({ role }: { role: string }) {
   );
 }
 
-// ─── Rating Select ────────────────────────────────────────────
-function RatingSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  return (
-    <div className="relative">
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full appearance-none pl-3 pr-7 py-1.5 text-xs border border-slate-200
-          rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20
-          focus:border-indigo-400 bg-white"
-      >
-        {RATINGS.map((r) => <option key={r} value={r}>{r}</option>)}
-      </select>
-      <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-    </div>
-  );
-}
-
-// ─── Access Denied Block ──────────────────────────────────────
 function AccessDenied({ role, requiredRoles, action }: {
-  role: string;
-  requiredRoles: string[];
-  action: string;
+  role: string; requiredRoles: string[]; action: string;
 }) {
   return (
     <div className="flex items-start gap-3 p-4 bg-red-50 border border-red-200 rounded-xl">
@@ -201,40 +164,221 @@ function AccessDenied({ role, requiredRoles, action }: {
   );
 }
 
-// ─── New QC Modal ─────────────────────────────────────────────
-interface NewQCModalProps {
-  jobs: QCJob[];
-  preSelectedOrderId?: string;
-  currentEmployee: CurrentEmployee | null;
-  onClose: () => void;
-  onSubmit: (payload: CreateQualityCheckRequest) => Promise<void>;
+function RatingSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <div className="relative">
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full appearance-none pl-3 pr-7 py-1.5 text-xs border border-slate-200
+          rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20
+          focus:border-indigo-400 bg-white"
+      >
+        {RATINGS.map((r) => <option key={r} value={r}>{r}</option>)}
+      </select>
+      <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+    </div>
+  );
 }
 
-function NewQCModal({
-  jobs,
-  preSelectedOrderId = "",
-  currentEmployee,
-  onClose,
-  onSubmit,
-}: NewQCModalProps) {
-  const [submitting, setSubmitting] = useState(false);
+// ─── Post Dev Checklist Panel ─────────────────────────────────
+function PostDevChecklistPanel({
+  checklist, onChange, readOnly = false,
+}: {
+  checklist: PostDevChecklist;
+  onChange:  (c: PostDevChecklist) => void;
+  readOnly?: boolean;
+}) {
+  const completed  = POST_DEV_CHECKLIST_ITEMS.filter((i) => checklist[i.id]).length + (checklist.carton_type ? 1 : 0);
+  const total      = POST_DEV_CHECKLIST_ITEMS.length + 1;
+  const allDone    = completed === total;
+  const pct        = Math.round((completed / total) * 100);
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 rounded-lg bg-amber-100 flex items-center justify-center">
+            <ClipboardCheck size={14} className="text-amber-600" />
+          </div>
+          <div>
+            <p className="text-xs font-bold text-slate-800">Post Press New Development Checklist</p>
+            <p className="text-[10px] text-slate-400">All items must be verified before approval</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className={`text-xs font-bold ${allDone ? "text-green-600" : "text-amber-600"}`}>
+            {completed}/{total}
+          </span>
+          {allDone && (
+            <span className="flex items-center gap-1 px-2 py-0.5 bg-green-100 text-green-700 rounded-full text-[10px] font-semibold">
+              <Check size={10} /> Complete
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+        <div
+          className={`h-full rounded-full transition-all duration-500 ${
+            allDone ? "bg-green-500" : pct > 50 ? "bg-amber-500" : "bg-orange-400"
+          }`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+
+      {/* Carton Type */}
+      <div className={`flex items-center justify-between p-3 rounded-lg border transition-all ${
+        checklist.carton_type ? "bg-green-50/50 border-green-200" : "bg-slate-50/50 border-slate-100"
+      }`}>
+        <div className="flex-1 min-w-0 mr-4">
+          <p className="text-xs text-slate-700 font-medium">Carton Type (RTI, STI, CLB, SLB)</p>
+          <p className="text-[10px] text-slate-400 mt-0.5">Registration</p>
+        </div>
+        <div className="flex gap-1.5 flex-shrink-0">
+          {CARTON_TYPES.map((type) => (
+            <button
+              key={type}
+              disabled={readOnly}
+              onClick={() => onChange({ ...checklist, carton_type: checklist.carton_type === type ? "" : type })}
+              className={`px-2.5 py-1 text-[11px] rounded-lg border font-medium transition-all ${
+                checklist.carton_type === type
+                  ? "bg-indigo-600 text-white border-indigo-600 shadow-sm"
+                  : "bg-white text-slate-500 border-slate-200 hover:border-slate-300"
+              } ${readOnly ? "cursor-default opacity-70" : "cursor-pointer"}`}
+            >
+              {type}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Items */}
+      <div className="space-y-1">
+        {POST_DEV_CHECKLIST_ITEMS.map((item, idx) => {
+          const checked = checklist[item.id];
+          return (
+            <div
+              key={item.id}
+              onClick={() => { if (!readOnly) onChange({ ...checklist, [item.id]: !checked }); }}
+              className={`flex items-center gap-3 p-2.5 rounded-lg border transition-all ${
+                checked
+                  ? "bg-green-50/50 border-green-200"
+                  : "bg-white border-slate-100 hover:border-slate-200 hover:bg-slate-50/50"
+              } ${readOnly ? "cursor-default" : "cursor-pointer"}`}
+            >
+              <div className={`w-5 h-5 rounded flex items-center justify-center flex-shrink-0 border-2 transition-all ${
+                checked ? "bg-green-500 border-green-500 text-white" : "bg-white border-slate-300"
+              }`}>
+                {checked && <Check size={12} strokeWidth={3} />}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className={`text-xs leading-relaxed ${checked ? "text-green-800" : "text-slate-700"}`}>
+                  <span className="text-slate-400 font-mono text-[10px] mr-1.5">{idx + 1}.</span>
+                  {item.label}
+                </p>
+              </div>
+              <span className={`text-[10px] px-1.5 py-0.5 rounded flex-shrink-0 ${
+                checked ? "bg-green-100 text-green-600" : "bg-slate-100 text-slate-400"
+              }`}>
+                {item.category}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      {!readOnly && (
+        <div>
+          <label className="block text-xs text-slate-600 mb-1 font-medium">Checker Notes (optional)</label>
+          <textarea
+            value={checklist.checker_notes}
+            onChange={(e) => onChange({ ...checklist, checker_notes: e.target.value })}
+            rows={2}
+            className="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg
+              resize-none focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-400"
+            placeholder="Any observations during checklist verification..."
+          />
+        </div>
+      )}
+      {readOnly && checklist.checker_notes && (
+        <div className="p-2.5 bg-slate-50 border border-slate-100 rounded-lg">
+          <p className="text-[10px] text-slate-400 mb-0.5 font-semibold">Checker Notes</p>
+          <p className="text-xs text-slate-600">{checklist.checker_notes}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── QC History for a job ─────────────────────────────────────
+function QCHistoryPanel({ jobId, jobType }: { jobId: string; jobType: "Production" | "Sample" }) {
+  const [history, setHistory] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const col = jobType === "Production" ? "production_order_id" : "sample_order_id";
+    supabase
+      .from("quality_checks")
+      .select("qc_id, qc_cycle, overall_status, workflow_status, checked_by_emp:checked_by(full_name), created_at, rework_required, approved_for_dispatch")
+      .eq(col, jobId)
+      .order("created_at", { ascending: true })
+      .then(({ data }) => {
+        setHistory(data || []);
+        setLoading(false);
+      });
+  }, [jobId, jobType]);
+
+  if (loading) return <p className="text-xs text-slate-400 py-2">Loading history...</p>;
+  if (history.length === 0) return null;
+
+  return (
+    <div className="mt-4">
+      <p className="text-xs font-semibold text-slate-700 mb-2">QC Cycle History</p>
+      <div className="space-y-1.5">
+        {history.map((h) => (
+          <div key={h.qc_id} className="flex items-center gap-3 p-2 bg-slate-50 rounded-lg border border-slate-100 text-xs">
+            <span className="text-indigo-600 font-bold">Cycle {h.qc_cycle}</span>
+            <StatusBadge status={h.approved_for_dispatch ? "Approved" : h.overall_status} />
+            <span className="text-slate-500">{h.checked_by_emp?.full_name || "Unknown"}</span>
+            <span className="text-slate-400 ml-auto">
+              {new Date(h.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── New QC Modal ─────────────────────────────────────────────
+interface NewQCModalProps {
+  jobs:                QCJob[];
+  preSelectedOrderId?: string;
+  currentEmployee:     CurrentEmployee | null;
+  onClose:             () => void;
+  onSubmit:            (payload: CreateQualityCheckRequest) => Promise<void>;
+}
+
+function NewQCModal({ jobs, preSelectedOrderId = "", currentEmployee, onClose, onSubmit }: NewQCModalProps) {
+  const [submitting,  setSubmitting]  = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [form, setForm] = useState<CreateQualityCheckRequest & { job_type?: 'Production' | 'Sample' }>({
-    production_order_id: preSelectedOrderId,
-    job_type: jobs.find(j => j.order_id === preSelectedOrderId)?.job_type || 'Production',
-    check_type: "Post Production",
-    color_accuracy: "Good",
-    print_quality: "Good",
-    binding_quality: "Good",
-    material_quality: "Good",
+  const [form, setForm] = useState<CreateQualityCheckRequest & { job_type?: "Production" | "Sample" }>({
+    production_order_id:  preSelectedOrderId,
+    job_type:             jobs.find((j) => j.order_id === preSelectedOrderId)?.job_type || "Production",
+    check_type:           "Post Production",
+    color_accuracy:       "Good",
+    print_quality:        "Good",
+    binding_quality:      "Good",
+    material_quality:     "Good",
     dimensional_accuracy: "Good",
-    finishing_quality: "Good",
-    overall_status: "Pending",
-    defect_quantity: 0,
-    rework_required: false,
+    finishing_quality:    "Good",
+    overall_status:       "Pending",
+    defect_quantity:      0,
+    rework_required:      false,
   });
 
-  const userRole = currentEmployee?.role || '';
+  const userRole      = currentEmployee?.role || "";
   const hasSubmitPerm = canSubmitQC(userRole);
 
   // Auto-calculate overall status
@@ -246,13 +390,10 @@ function NewQCModal({
     ];
     const hasPoor = ratings.some((r) => r === "Poor");
     const hasFair = ratings.some((r) => r === "Fair");
-    if (hasPoor) {
-      setForm((f) => ({ ...f, overall_status: "Failed" }));
-    } else if (hasFair) {
-      setForm((f) => ({ ...f, overall_status: "Pending" }));
-    } else {
-      setForm((f) => ({ ...f, overall_status: "Passed" }));
-    }
+    setForm((f) => ({
+      ...f,
+      overall_status: hasPoor ? "Failed" : hasFair ? "Pending" : "Passed",
+    }));
   }, [
     form.color_accuracy, form.print_quality,
     form.material_quality, form.dimensional_accuracy,
@@ -260,10 +401,7 @@ function NewQCModal({
   ]);
 
   const handleSubmit = async () => {
-    if (!form.production_order_id) {
-      setSubmitError("Please select a production order");
-      return;
-    }
+    if (!form.production_order_id) { setSubmitError("Please select a job"); return; }
     setSubmitting(true);
     setSubmitError(null);
     try {
@@ -276,9 +414,9 @@ function NewQCModal({
     }
   };
 
-  const selectedJob = jobs.find((po) => po.order_id === form.production_order_id);
+  const selectedJob            = jobs.find((j) => j.order_id === form.production_order_id);
   const selectedJobHasActiveQC = selectedJob?.hasActiveQC ?? false;
-  const selectedJobQCStatus = selectedJob?.activeQCStatus;
+  const selectedJobQCStatus    = selectedJob?.activeQCStatus;
 
   return (
     <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4">
@@ -298,19 +436,12 @@ function NewQCModal({
           </button>
         </div>
 
-        {/* Body */}
         <div className="flex-1 overflow-y-auto p-6 space-y-5">
 
-          {/* Role Access Denied */}
           {!hasSubmitPerm && (
-            <AccessDenied
-              role={userRole}
-              requiredRoles={SUBMIT_ROLE_LABELS}
-              action="submit QC inspection reports"
-            />
+            <AccessDenied role={userRole} requiredRoles={SUBMIT_ROLE_LABELS} action="submit QC inspection reports" />
           )}
 
-          {/* Submit Error */}
           {submitError && (
             <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg">
               <AlertCircle size={14} className="text-red-500 flex-shrink-0 mt-0.5" />
@@ -318,47 +449,60 @@ function NewQCModal({
             </div>
           )}
 
-          {/* Only show form if user has permission */}
           {hasSubmitPerm && (
             <>
-              {/* Production Order Select */}
+              {/* Job Select */}
               <div>
                 <label className="block text-xs font-medium text-slate-700 mb-1.5">
-                  Production Order *
+                  Select Job *
                 </label>
                 <div className="relative">
                   <select
                     value={form.production_order_id}
                     onChange={(e) => {
                       setSubmitError(null);
-                      const selected = jobs.find(j => j.order_id === e.target.value);
-                      setForm((f) => ({ ...f, production_order_id: e.target.value, job_type: selected?.job_type }));
+                      const selected = jobs.find((j) => j.order_id === e.target.value);
+                      setForm((f) => ({
+                        ...f,
+                        production_order_id: e.target.value,
+                        job_type:            selected?.job_type,
+                      }));
                     }}
                     className="w-full appearance-none pl-3 pr-8 py-2 text-sm border border-slate-200
                       rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20
                       focus:border-indigo-400 bg-white"
                   >
-                    <option value="">Select production order...</option>
-                    {jobs.map((po) => {
-                      const isLocked = po.hasActiveQC;
-                      return (
-                        <option
-                          key={po.order_id}
-                          value={po.order_id}
-                          disabled={isLocked}
-                        >
-                          {po.order_id} ({po.job_type}) — {po.customer_name} · {po.product_name}
-                          {po.status === "QC Pending" && !isLocked ? " ⚠ QC Pending" : ""}
-                          {isLocked ? ` 🔒 ${po.activeQCStatus}` : ""}
-                        </option>
-                      );
-                    })}
+                    <option value="">Select job...</option>
+                    {jobs.map((j) => (
+                      <option key={j.order_id} value={j.order_id} disabled={j.hasActiveQC}>
+                        {j.order_id} ({j.job_type}) — {j.customer_name} · {j.product_name}
+                        {j.qc_cycle > 0 ? ` [Cycle ${j.qc_cycle + 1}]` : ""}
+                        {j.hasActiveQC ? ` 🔒 ${j.activeQCStatus}` : ""}
+                        {j.rework_count > 0 ? ` ↩ ${j.rework_count}x rework` : ""}
+                      </option>
+                    ))}
                   </select>
                   <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                 </div>
               </div>
 
-              {/* Active QC Warning */}
+              {/* Rework info banner */}
+              {selectedJob && selectedJob.rework_count > 0 && !selectedJobHasActiveQC && (
+                <div className="flex items-start gap-3 p-3 bg-orange-50 border border-orange-200 rounded-lg">
+                  <RotateCcw size={15} className="text-orange-600 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-xs font-semibold text-orange-800">
+                      Rework Inspection — Cycle {(selectedJob.qc_cycle || 0) + 1}
+                    </p>
+                    <p className="text-xs text-orange-700 mt-0.5">
+                      This job has been reworked {selectedJob.rework_count} time(s).
+                      This QC report will be cycle {(selectedJob.qc_cycle || 0) + 1}.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Locked */}
               {selectedJobHasActiveQC && (
                 <div className="flex items-start gap-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
                   <Lock size={15} className="text-amber-600 flex-shrink-0 mt-0.5" />
@@ -368,14 +512,14 @@ function NewQCModal({
                     </p>
                     <p className="text-xs text-amber-700 mt-0.5">
                       {selectedJobQCStatus === "Awaiting Approval"
-                        ? "This job's QC report is awaiting supervisor approval. You cannot submit another until it is approved or rejected."
-                        : (selectedJob?.job_type === "Sample" ? "This sample QC has already been approved." : "This job has already been approved for dispatch.")}
+                        ? "This job's QC report is awaiting supervisor approval."
+                        : "This job has already been approved."}
                     </p>
                   </div>
                 </div>
               )}
 
-              {/* Selected Job Info */}
+              {/* Job info */}
               {selectedJob && !selectedJobHasActiveQC && (
                 <div className="bg-indigo-50 border border-indigo-100 rounded-lg p-3 grid grid-cols-3 gap-3 text-xs">
                   <div>
@@ -393,7 +537,12 @@ function NewQCModal({
                 </div>
               )}
 
-              {/* Form — only if order not locked */}
+              {/* Show QC history inline */}
+              {selectedJob && !selectedJobHasActiveQC && selectedJob.qc_cycle > 0 && (
+                <QCHistoryPanel jobId={selectedJob.order_id} jobType={selectedJob.job_type} />
+              )}
+
+              {/* Form */}
               {!selectedJobHasActiveQC && (
                 <>
                   {/* Check Type */}
@@ -404,10 +553,11 @@ function NewQCModal({
                         <button
                           key={type}
                           onClick={() => setForm((f) => ({ ...f, check_type: type }))}
-                          className={`px-3 py-1.5 text-xs rounded-lg border transition-colors ${form.check_type === type
-                            ? "bg-indigo-600 text-white border-indigo-600"
-                            : "bg-white text-slate-600 border-slate-200 hover:border-slate-300"
-                            }`}
+                          className={`px-3 py-1.5 text-xs rounded-lg border transition-colors ${
+                            form.check_type === type
+                              ? "bg-indigo-600 text-white border-indigo-600"
+                              : "bg-white text-slate-600 border-slate-200 hover:border-slate-300"
+                          }`}
                         >
                           {type}
                         </button>
@@ -439,30 +589,31 @@ function NewQCModal({
                     </div>
                   </div>
 
-                  {/* Overall Status Preview */}
-                  <div className={`flex items-center justify-between p-3 rounded-lg border ${form.overall_status === "Passed"
-                    ? "bg-green-50 border-green-200"
-                    : form.overall_status === "Failed"
+                  {/* Auto-calculated result */}
+                  <div className={`flex items-center justify-between p-3 rounded-lg border ${
+                    form.overall_status === "Passed"
+                      ? "bg-green-50 border-green-200"
+                      : form.overall_status === "Failed"
                       ? "bg-red-50 border-red-200"
                       : "bg-amber-50 border-amber-200"
-                    }`}>
+                  }`}>
                     <div>
                       <p className="text-sm font-semibold text-slate-700">Auto-calculated Result</p>
                       {form.overall_status === "Passed" && (
-                        <div className="text-[10px] text-green-600 font-medium">
-                          ✓ Will go to Supervisor/Admin for {selectedJob?.job_type === "Sample" ? "sample approval" : "dispatch approval"}
-                        </div>
+                        <p className="text-[10px] text-green-600 font-medium mt-0.5">
+                          ✓ Will go to Supervisor for {selectedJob?.job_type === "Sample" ? "sample approval" : "dispatch approval"}
+                        </p>
                       )}
                       {form.overall_status === "Failed" && (
                         <p className="text-xs text-red-600 mt-0.5">
-                          ✗ Will be sent back to production for rework
+                          ✗ Job will be sent back to machine operator for rework
                         </p>
                       )}
                     </div>
                     <StatusBadge status={form.overall_status} />
                   </div>
 
-                  {/* Defects — only if Failed */}
+                  {/* Defects */}
                   {form.overall_status === "Failed" && (
                     <div className="space-y-3 p-4 bg-red-50 border border-red-100 rounded-lg">
                       <p className="text-xs font-semibold text-red-800">Defect Details</p>
@@ -474,8 +625,7 @@ function NewQCModal({
                               value={form.defect_type || ""}
                               onChange={(e) => setForm((f) => ({ ...f, defect_type: e.target.value }))}
                               className="w-full appearance-none pl-3 pr-7 py-1.5 text-xs border
-                                border-slate-200 rounded-lg bg-white focus:outline-none
-                                focus:ring-2 focus:ring-red-500/20 focus:border-red-400"
+                                border-slate-200 rounded-lg bg-white focus:outline-none"
                             >
                               <option value="">Select type...</option>
                               {DEFECT_TYPES.map((d) => <option key={d}>{d}</option>)}
@@ -486,24 +636,21 @@ function NewQCModal({
                         <div>
                           <label className="block text-xs text-slate-600 mb-1">Defect Quantity</label>
                           <input
-                            type="number"
-                            min="0"
+                            type="number" min="0"
                             value={form.defect_quantity || 0}
                             onChange={(e) => setForm((f) => ({ ...f, defect_quantity: parseInt(e.target.value) || 0 }))}
-                            className="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg
-                              focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-400"
+                            className="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none"
                           />
                         </div>
                       </div>
                       <div>
-                        <label className="block text-xs text-slate-600 mb-1">Defect Description</label>
+                        <label className="block text-xs text-slate-600 mb-1">Defect Description *</label>
                         <textarea
                           value={form.defect_description || ""}
                           onChange={(e) => setForm((f) => ({ ...f, defect_description: e.target.value }))}
                           rows={2}
-                          className="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg
-                            resize-none focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-400"
-                          placeholder="Describe the defects..."
+                          className="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg resize-none focus:outline-none"
+                          placeholder="Describe the defects found..."
                         />
                       </div>
                       <label className="flex items-center gap-2 cursor-pointer">
@@ -517,38 +664,35 @@ function NewQCModal({
                       </label>
                       {form.rework_required && (
                         <div>
-                          <label className="block text-xs text-slate-600 mb-1">Rework Instructions</label>
+                          <label className="block text-xs text-slate-600 mb-1">Rework Instructions for Operator</label>
                           <textarea
                             value={form.rework_description || ""}
                             onChange={(e) => setForm((f) => ({ ...f, rework_description: e.target.value }))}
                             rows={2}
                             className="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg resize-none focus:outline-none"
-                            placeholder="Describe what needs to be reworked..."
+                            placeholder="Tell the operator exactly what needs to be fixed..."
                           />
                         </div>
                       )}
                     </div>
                   )}
 
-                  {/* Info box when Passed */}
                   {form.overall_status === "Passed" && (
                     <div className="flex items-start gap-3 p-3 bg-blue-50 border border-blue-100 rounded-lg">
                       <ShieldCheck size={16} className="text-blue-600 flex-shrink-0 mt-0.5" />
                       <div>
-                        <p className="text-xs font-semibold text-blue-800">Supervisor/Admin Approval Required</p>
-                        <div className="text-xs text-blue-600 mt-0.5">
-                          <strong>Note:</strong> This report will be saved as <strong>Passed</strong>.
-                          A Supervisor or Admin must still review this report and {selectedJob?.job_type === "Sample" ? "approve the sample" : "approve for dispatch"}.
-                        </div>
+                        <p className="text-xs font-semibold text-blue-800">Supervisor / Admin Approval Required</p>
+                        <p className="text-xs text-blue-600 mt-0.5">
+                          This report will be saved as Passed. A Supervisor or Admin must still review
+                          and {selectedJob?.job_type === "Sample" ? "approve the sample" : "approve for dispatch"}.
+                        </p>
                       </div>
                     </div>
                   )}
 
                   {/* Notes */}
                   <div>
-                    <label className="block text-xs font-medium text-slate-700 mb-1.5">
-                      Inspector Notes
-                    </label>
+                    <label className="block text-xs font-medium text-slate-700 mb-1.5">Inspector Notes</label>
                     <textarea
                       value={form.notes || ""}
                       onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
@@ -576,10 +720,10 @@ function NewQCModal({
             {submitting
               ? "Submitting..."
               : !hasSubmitPerm
-                ? "No Permission"
-                : selectedJobHasActiveQC
-                  ? "QC Already Submitted"
-                  : "Submit QC Report"}
+              ? "No Permission"
+              : selectedJobHasActiveQC
+              ? "QC Already Submitted"
+              : "Submit QC Report"}
           </button>
           <button
             onClick={onClose}
@@ -594,209 +738,67 @@ function NewQCModal({
   );
 }
 
-// ─── Post Dev Checklist Panel ─────────────────────────────────
-function PostDevChecklistPanel({
-  checklist,
-  onChange,
-  readOnly = false,
-}: {
-  checklist: PostDevChecklist;
-  onChange: (checklist: PostDevChecklist) => void;
-  readOnly?: boolean;
-}) {
-  const completedCount = POST_DEV_CHECKLIST_ITEMS.filter(
-    (item) => checklist[item.id]
-  ).length + (checklist.carton_type ? 1 : 0);
-  const totalCount = POST_DEV_CHECKLIST_ITEMS.length + 1; // +1 for carton type
-  const allDone = completedCount === totalCount;
-  const progressPct = Math.round((completedCount / totalCount) * 100);
-
-  return (
-    <div className="space-y-3">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg bg-amber-100 flex items-center justify-center">
-            <ClipboardCheck size={14} className="text-amber-600" />
-          </div>
-          <div>
-            <p className="text-xs font-bold text-slate-800">Post Press New Development Checklist</p>
-            <p className="text-[10px] text-slate-400">All items must be verified before approval</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className={`text-xs font-bold ${allDone ? "text-green-600" : "text-amber-600"
-            }`}>
-            {completedCount}/{totalCount}
-          </span>
-          {allDone && (
-            <span className="flex items-center gap-1 px-2 py-0.5 bg-green-100 text-green-700 rounded-full text-[10px] font-semibold">
-              <Check size={10} /> Complete
-            </span>
-          )}
-        </div>
-      </div>
-
-      {/* Progress bar */}
-      <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
-        <div
-          className={`h-full rounded-full transition-all duration-500 ease-out ${allDone
-            ? "bg-green-500"
-            : progressPct > 50
-              ? "bg-amber-500"
-              : "bg-orange-400"
-            }`}
-          style={{ width: `${progressPct}%` }}
-        />
-      </div>
-
-      {/* Carton Type Select */}
-      <div className={`flex items-center justify-between p-3 rounded-lg border transition-all ${checklist.carton_type
-        ? "bg-green-50/50 border-green-200"
-        : "bg-slate-50/50 border-slate-100"
-        }`}>
-        <div className="flex-1 min-w-0 mr-4">
-          <p className="text-xs text-slate-700 font-medium">Carton Type (RTI, STI, CLB, SLB)</p>
-          <p className="text-[10px] text-slate-400 mt-0.5">Registration</p>
-        </div>
-        <div className="flex gap-1.5 flex-shrink-0">
-          {CARTON_TYPES.map((type) => (
-            <button
-              key={type}
-              disabled={readOnly}
-              onClick={() => onChange({ ...checklist, carton_type: checklist.carton_type === type ? "" : type })}
-              className={`px-2.5 py-1 text-[11px] rounded-lg border font-medium transition-all ${checklist.carton_type === type
-                ? "bg-indigo-600 text-white border-indigo-600 shadow-sm"
-                : "bg-white text-slate-500 border-slate-200 hover:border-slate-300"
-                } ${readOnly ? 'cursor-default opacity-70' : 'cursor-pointer'}`}
-            >
-              {type}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Checklist Items */}
-      <div className="space-y-1">
-        {POST_DEV_CHECKLIST_ITEMS.map((item, idx) => {
-          const isChecked = checklist[item.id];
-          return (
-            <div
-              key={item.id}
-              className={`flex items-center gap-3 p-2.5 rounded-lg border transition-all cursor-pointer ${isChecked
-                ? "bg-green-50/50 border-green-200"
-                : "bg-white border-slate-100 hover:border-slate-200 hover:bg-slate-50/50"
-                } ${readOnly ? 'cursor-default' : ''}`}
-              onClick={() => {
-                if (readOnly) return;
-                onChange({ ...checklist, [item.id]: !isChecked });
-              }}
-            >
-              <div className={`w-5 h-5 rounded flex items-center justify-center flex-shrink-0 border-2 transition-all ${isChecked
-                ? "bg-green-500 border-green-500 text-white"
-                : "bg-white border-slate-300"
-                }`}>
-                {isChecked && <Check size={12} strokeWidth={3} />}
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className={`text-xs leading-relaxed ${isChecked ? "text-green-800" : "text-slate-700"
-                  }`}>
-                  <span className="text-slate-400 font-mono text-[10px] mr-1.5">{idx + 1}.</span>
-                  {item.label}
-                </p>
-              </div>
-              <span className={`text-[10px] px-1.5 py-0.5 rounded flex-shrink-0 ${isChecked
-                ? "bg-green-100 text-green-600"
-                : "bg-slate-100 text-slate-400"
-                }`}>
-                {item.category}
-              </span>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Checker Notes */}
-      {!readOnly && (
-        <div>
-          <label className="block text-xs text-slate-600 mb-1 font-medium">Checker Notes (optional)</label>
-          <textarea
-            value={checklist.checker_notes}
-            onChange={(e) => onChange({ ...checklist, checker_notes: e.target.value })}
-            rows={2}
-            className="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg
-              resize-none focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-400"
-            placeholder="Any observations during checklist verification..."
-          />
-        </div>
-      )}
-      {readOnly && checklist.checker_notes && (
-        <div className="p-2.5 bg-slate-50 border border-slate-100 rounded-lg">
-          <p className="text-[10px] text-slate-400 mb-0.5 font-semibold">Checker Notes</p>
-          <p className="text-xs text-slate-600">{checklist.checker_notes}</p>
-        </div>
-      )}
-    </div>
-  );
-}
-
 // ─── QC Detail Modal ──────────────────────────────────────────
 interface QCDetailModalProps {
-  qc: QualityCheck;
+  qc:              QualityCheck;
   currentEmployee: CurrentEmployee | null;
-  onClose: () => void;
-  onApprove: (id: number, notes?: string, checklist?: PostDevChecklist) => Promise<void>;
-  onReject: (id: number, desc: string, rework: boolean, reworkDesc?: string) => Promise<void>;
+  onClose:         () => void;
+  onApprove:       (id: number, notes?: string, checklist?: PostDevChecklist) => Promise<void>;
+  onReject:        (id: number, desc: string, rework: boolean, reworkDesc?: string) => Promise<void>;
 }
 
 function QCDetailModal({ qc, currentEmployee, onClose, onApprove, onReject }: QCDetailModalProps) {
-  const [action, setAction] = useState<"" | "approve" | "reject">("");
-  const [notes, setNotes] = useState("");
-  const [defectDesc, setDefectDesc] = useState(qc.defect_description || "");
-  const [rework, setRework] = useState(qc.rework_required);
-  const [reworkDesc, setReworkDesc] = useState(qc.rework_description || "");
-  const [submitting, setSubmitting] = useState(false);
-  const [checklist, setChecklist] = useState<PostDevChecklist>(
+  const [action,        setAction]        = useState<"" | "approve" | "reject">("");
+  const [notes,         setNotes]         = useState("");
+  const [defectDesc,    setDefectDesc]    = useState(qc.defect_description || "");
+  const [rework,        setRework]        = useState(qc.rework_required);
+  const [reworkDesc,    setReworkDesc]    = useState(qc.rework_description || "");
+  const [submitting,    setSubmitting]    = useState(false);
+  const [checklist,     setChecklist]     = useState<PostDevChecklist>(
     qc.post_dev_checklist || { ...DEFAULT_CHECKLIST }
   );
   const [showChecklist, setShowChecklist] = useState(false);
+  const [actionError,   setActionError]   = useState<string | null>(null);
 
-  const userRole = currentEmployee?.role || '';
+  const userRole       = currentEmployee?.role || "";
   const hasApprovePerm = canApproveQC(userRole);
+
+  // Can act = report is Passed and NOT yet approved
   const canAct = qc.overall_status === "Passed" && !qc.approved_for_dispatch;
 
-  // Check if checklist is complete
-  const checklistItemsCompleted = POST_DEV_CHECKLIST_ITEMS.filter(
-    (item) => checklist[item.id]
-  ).length + (checklist.carton_type ? 1 : 0);
-  const checklistTotal = POST_DEV_CHECKLIST_ITEMS.length + 1;
-  const isChecklistComplete = checklistItemsCompleted === checklistTotal;
-  const hasExistingChecklist = !!qc.post_dev_checklist;
+  const checklistDone =
+    POST_DEV_CHECKLIST_ITEMS.filter((i) => checklist[i.id]).length +
+    (checklist.carton_type ? 1 : 0) ===
+    POST_DEV_CHECKLIST_ITEMS.length + 1;
 
   const handleAction = async () => {
     setSubmitting(true);
+    setActionError(null);
     try {
       if (action === "approve") {
         await onApprove(qc.qc_id, notes, checklist);
       } else if (action === "reject") {
+        if (!defectDesc.trim()) { setActionError("Please enter a rejection reason"); setSubmitting(false); return; }
         await onReject(qc.qc_id, defectDesc, rework, reworkDesc);
       }
       onClose();
-    } catch (e) {
-      console.error(e);
+    } catch (e: any) {
+      setActionError(e?.message || "Action failed. Please try again.");
     } finally {
       setSubmitting(false);
     }
   };
 
   const ratings = [
-    { label: "Color Accuracy", value: qc.color_accuracy },
-    { label: "Print Quality", value: qc.print_quality },
-    { label: "Material Quality", value: qc.material_quality },
+    { label: "Color Accuracy",       value: qc.color_accuracy       },
+    { label: "Print Quality",        value: qc.print_quality        },
+    { label: "Material Quality",     value: qc.material_quality     },
     { label: "Dimensional Accuracy", value: qc.dimensional_accuracy },
-    { label: "Finishing Quality", value: qc.finishing_quality },
-    { label: "Binding Quality", value: qc.binding_quality },
+    { label: "Finishing Quality",    value: qc.finishing_quality    },
+    { label: "Binding Quality",      value: qc.binding_quality      },
   ];
+
+  const isSample = !!qc.sample_order_id;
 
   return (
     <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4">
@@ -805,14 +807,22 @@ function QCDetailModal({ qc, currentEmployee, onClose, onApprove, onReject }: QC
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <h2 className="text-slate-900 text-sm font-bold">QC Report #{qc.qc_id}</h2>
+              {qc.qc_cycle > 1 && (
+                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-orange-100 text-orange-700 border border-orange-200">
+                  Cycle {qc.qc_cycle}
+                </span>
+              )}
+              {isSample && (
+                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-700 border border-amber-200">
+                  Sample
+                </span>
+              )}
               <StatusBadge status={
-                qc.approved_for_dispatch
-                  ? "Passed"
-                  : qc.overall_status === "Passed"
-                    ? "Awaiting Approval"
-                    : qc.overall_status
+                qc.approved_for_dispatch ? "Approved" :
+                qc.overall_status === "Passed" ? "Awaiting Approval" :
+                qc.overall_status
               } />
             </div>
             <p className="text-slate-400 text-xs mt-0.5">
@@ -824,17 +834,16 @@ function QCDetailModal({ qc, currentEmployee, onClose, onApprove, onReject }: QC
           </button>
         </div>
 
-        {/* Body */}
         <div className="flex-1 overflow-y-auto p-6 space-y-5">
 
-          {/* Job Info */}
+          {/* Job info */}
           <div className="grid grid-cols-2 gap-3 text-xs">
             {[
-              ["Product", qc.product_name],
-              ["Customer", qc.customer_name],
+              ["Product",    qc.product_name],
+              ["Customer",   qc.customer_name],
               ["Check Type", qc.check_type],
-              ["Quantity", `${qc.quantity.toLocaleString()} pcs`],
-              ["Inspector", qc.checked_by_name],
+              ["Quantity",   `${qc.quantity.toLocaleString()} pcs`],
+              ["Inspector",  qc.checked_by_name],
               ["Check Date", new Date(qc.check_date).toLocaleDateString("en-IN")],
             ].map(([l, v]) => (
               <div key={l} className="bg-slate-50 rounded-lg p-2.5">
@@ -873,13 +882,11 @@ function QCDetailModal({ qc, currentEmployee, onClose, onApprove, onReject }: QC
             </div>
           )}
 
-          {/* Rework */}
-          {qc.rework_required && (
+          {/* Rework instructions */}
+          {qc.rework_required && qc.rework_description && (
             <div className="p-3 bg-orange-50 border border-orange-100 rounded-lg">
-              <p className="text-xs font-semibold text-orange-800 mb-1">Rework Required</p>
-              {qc.rework_description && (
-                <p className="text-xs text-orange-700">{qc.rework_description}</p>
-              )}
+              <p className="text-xs font-semibold text-orange-800 mb-1">🔧 Rework Instructions</p>
+              <p className="text-xs text-orange-700 whitespace-pre-wrap">{qc.rework_description}</p>
             </div>
           )}
 
@@ -888,6 +895,22 @@ function QCDetailModal({ qc, currentEmployee, onClose, onApprove, onReject }: QC
             <div className="p-3 bg-slate-50 border border-slate-100 rounded-lg">
               <p className="text-xs font-semibold text-slate-700 mb-1">Inspector Notes</p>
               <p className="text-xs text-slate-600">{qc.notes}</p>
+            </div>
+          )}
+
+          {/* QC Cycle History */}
+          {(qc.sample_order_id || qc.production_order_id) && (
+            <QCHistoryPanel
+              jobId={qc.sample_order_id || qc.production_order_id}
+              jobType={qc.sample_order_id ? "Sample" : "Production"}
+            />
+          )}
+
+          {/* Error */}
+          {actionError && (
+            <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg">
+              <AlertCircle size={14} className="text-red-500 flex-shrink-0 mt-0.5" />
+              <p className="text-xs text-red-700 font-medium">{actionError}</p>
             </div>
           )}
 
@@ -904,75 +927,78 @@ function QCDetailModal({ qc, currentEmployee, onClose, onApprove, onReject }: QC
                 <div className="space-y-3">
                   <div className="flex items-start gap-2 p-3 bg-blue-50 border border-blue-100 rounded-lg">
                     <ShieldCheck size={14} className="text-blue-600 flex-shrink-0 mt-0.5" />
-                    <p className="text-slate-600 text-sm mt-0.5 leading-relaxed">
+                    <p className="text-slate-600 text-xs mt-0.5 leading-relaxed">
                       Inspector <span className="font-semibold text-slate-900">{qc.checked_by_name}</span> marked
-                      this job as Passed. Review the ratings above and {qc.sample_order_id ? "approve the sample" : "approve for dispatch"} or send back for rework.
+                      this job as Passed. Review ratings and{" "}
+                      {isSample ? "approve the sample" : "approve for dispatch"} or send back for rework.
                     </p>
                   </div>
 
                   <div className="flex gap-2">
                     <button
-                      onClick={() => setAction("approve")}
+                      onClick={() => { setAction("approve"); setActionError(null); }}
                       className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl
-                        text-sm transition-all font-semibold ${action === "approve"
+                        text-sm transition-all font-semibold ${
+                        action === "approve"
                           ? "bg-green-600 text-white"
                           : "bg-green-50 text-green-700 border border-green-200 hover:bg-green-100"
-                        }`}
+                      }`}
                     >
-                      <ThumbsUp size={15} /> {qc.sample_order_id ? "Approve Sample" : "Approve for Dispatch"}
+                      <ThumbsUp size={15} />
+                      {isSample ? "Approve Sample" : "Approve for Dispatch"}
                     </button>
                     <button
-                      onClick={() => setAction("reject")}
+                      onClick={() => { setAction("reject"); setActionError(null); }}
                       className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl
-                        text-sm transition-all font-semibold ${action === "reject"
+                        text-sm transition-all font-semibold ${
+                        action === "reject"
                           ? "bg-red-600 text-white"
                           : "bg-red-50 text-red-700 border border-red-200 hover:bg-red-100"
-                        }`}
+                      }`}
                     >
                       <ThumbsDown size={15} /> Reject & Rework
                     </button>
                   </div>
 
+                  {/* Approve form */}
                   {action === "approve" && (
                     <div className="space-y-4">
-                      {/* Post Development Checklist */}
-                      <div className={`p-4 rounded-xl border-2 transition-all ${isChecklistComplete
-                        ? "border-green-200 bg-green-50/30"
-                        : "border-amber-200 bg-amber-50/30"
-                        }`}>
+                      <div className={`p-4 rounded-xl border-2 transition-all ${
+                        checklistDone
+                          ? "border-green-200 bg-green-50/30"
+                          : "border-amber-200 bg-amber-50/30"
+                      }`}>
                         <div className="flex items-center justify-between mb-3">
                           <button
                             onClick={() => setShowChecklist(!showChecklist)}
                             className="flex items-center gap-2 text-left"
                           >
-                            <FileCheck size={16} className={isChecklistComplete ? "text-green-600" : "text-amber-600"} />
+                            <FileCheck size={16} className={checklistDone ? "text-green-600" : "text-amber-600"} />
                             <div>
                               <p className="text-xs font-bold text-slate-800">
                                 Post Press Development Checklist
-                                {!isChecklistComplete && (
-                                  <span className="text-red-500 ml-1">*</span>
-                                )}
+                                {!checklistDone && <span className="text-red-500 ml-1">*</span>}
                               </p>
                               <p className="text-[10px] text-slate-400">
-                                {isChecklistComplete
+                                {checklistDone
                                   ? "All items verified — ready to approve"
-                                  : `${checklistItemsCompleted}/${checklistTotal} verified — complete all to approve`}
+                                  : "Complete all items to approve"}
                               </p>
                             </div>
                           </button>
                           <button
                             onClick={() => setShowChecklist(!showChecklist)}
-                            className={`px-2.5 py-1 text-[11px] rounded-lg border font-medium transition-all ${showChecklist
-                              ? "bg-slate-800 text-white border-slate-800"
-                              : isChecklistComplete
-                                ? "bg-green-100 text-green-700 border-green-200 hover:bg-green-200"
-                                : "bg-amber-100 text-amber-700 border-amber-200 hover:bg-amber-200"
-                              }`}
+                            className={`px-2.5 py-1 text-[11px] rounded-lg border font-medium transition-all ${
+                              showChecklist
+                                ? "bg-slate-800 text-white border-slate-800"
+                                : checklistDone
+                                ? "bg-green-100 text-green-700 border-green-200"
+                                : "bg-amber-100 text-amber-700 border-amber-200"
+                            }`}
                           >
-                            {showChecklist ? "Collapse" : isChecklistComplete ? "Review" : "Open Checklist"}
+                            {showChecklist ? "Collapse" : checklistDone ? "Review" : "Open Checklist"}
                           </button>
                         </div>
-
                         {showChecklist && (
                           <PostDevChecklistPanel
                             checklist={checklist}
@@ -980,18 +1006,16 @@ function QCDetailModal({ qc, currentEmployee, onClose, onApprove, onReject }: QC
                             readOnly={false}
                           />
                         )}
-
-                        {!showChecklist && !isChecklistComplete && (
+                        {!showChecklist && !checklistDone && (
                           <div className="flex items-center gap-2 p-2.5 bg-amber-50 border border-amber-200 rounded-lg">
                             <AlertCircle size={13} className="text-amber-500 flex-shrink-0" />
                             <p className="text-[11px] text-amber-700">
-                              You must complete the checklist before approving. Click "Open Checklist" above.
+                              You must complete the checklist before approving.
                             </p>
                           </div>
                         )}
                       </div>
 
-                      {/* Approval Notes */}
                       <div>
                         <label className="block text-xs text-slate-600 mb-1">Approval Notes (optional)</label>
                         <textarea
@@ -1006,8 +1030,10 @@ function QCDetailModal({ qc, currentEmployee, onClose, onApprove, onReject }: QC
                     </div>
                   )}
 
+                  {/* Reject form */}
                   {action === "reject" && (
-                    <div className="space-y-2">
+                    <div className="space-y-3 p-4 bg-red-50 border border-red-100 rounded-lg">
+                      <p className="text-xs font-semibold text-red-800">Rejection Details</p>
                       <div>
                         <label className="block text-xs text-slate-600 mb-1">Rejection Reason *</label>
                         <textarea
@@ -1016,7 +1042,7 @@ function QCDetailModal({ qc, currentEmployee, onClose, onApprove, onReject }: QC
                           rows={2}
                           className="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg
                             resize-none focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-400"
-                          placeholder="Describe the issues..."
+                          placeholder="Describe the issues that need to be corrected..."
                         />
                       </div>
                       <label className="flex items-center gap-2 cursor-pointer">
@@ -1026,17 +1052,27 @@ function QCDetailModal({ qc, currentEmployee, onClose, onApprove, onReject }: QC
                           onChange={(e) => setRework(e.target.checked)}
                           className="w-4 h-4 rounded"
                         />
-                        <span className="text-xs text-slate-700">Rework Required</span>
+                        <span className="text-xs text-slate-700 font-medium">Rework Required</span>
                       </label>
                       {rework && (
-                        <textarea
-                          value={reworkDesc}
-                          onChange={(e) => setReworkDesc(e.target.value)}
-                          rows={2}
-                          className="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg resize-none focus:outline-none"
-                          placeholder="Rework instructions..."
-                        />
+                        <div>
+                          <label className="block text-xs text-slate-600 mb-1">Rework Instructions for Operator</label>
+                          <textarea
+                            value={reworkDesc}
+                            onChange={(e) => setReworkDesc(e.target.value)}
+                            rows={3}
+                            className="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg
+                              resize-none focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-400"
+                            placeholder="Tell the operator exactly what needs to be fixed and how..."
+                          />
+                        </div>
                       )}
+                      <div className="p-2.5 bg-orange-50 border border-orange-200 rounded-lg">
+                        <p className="text-[11px] text-orange-700">
+                          ⚠️ The machine operator will immediately see this rejection with your instructions.
+                          The job status will change to <strong>Rework Required</strong>.
+                        </p>
+                      </div>
                     </div>
                   )}
 
@@ -1045,20 +1081,25 @@ function QCDetailModal({ qc, currentEmployee, onClose, onApprove, onReject }: QC
                       onClick={handleAction}
                       disabled={
                         submitting ||
-                        (action === "approve" && !isChecklistComplete) ||
-                        (action === "reject" && !defectDesc)
+                        (action === "approve" && !checklistDone) ||
+                        (action === "reject" && !defectDesc.trim())
                       }
                       className={`w-full py-2.5 rounded-xl text-sm font-semibold text-white
-                        transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${action === "approve" && !isChecklistComplete
+                        transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                        action === "approve" && !checklistDone
                           ? "bg-amber-500 hover:bg-amber-600"
-                          : "bg-slate-800 hover:bg-slate-900"
-                        }`}
+                          : action === "approve"
+                          ? "bg-green-600 hover:bg-green-700"
+                          : "bg-red-600 hover:bg-red-700"
+                      }`}
                     >
                       {submitting
-                        ? "Submitting..."
-                        : action === "approve" && !isChecklistComplete
-                          ? `Complete Checklist (${checklistItemsCompleted}/${checklistTotal})`
-                          : "Confirm Decision"}
+                        ? "Processing..."
+                        : action === "approve" && !checklistDone
+                        ? "Complete Checklist First"
+                        : action === "approve"
+                        ? isSample ? "✓ Approve Sample" : "✓ Approve for Dispatch"
+                        : "✗ Confirm Rejection & Send for Rework"}
                     </button>
                   )}
                 </div>
@@ -1072,7 +1113,9 @@ function QCDetailModal({ qc, currentEmployee, onClose, onApprove, onReject }: QC
               <div className="flex items-center gap-3 p-3 bg-green-50 border border-green-100 rounded-lg">
                 <CheckCircle size={18} className="text-green-600 flex-shrink-0" />
                 <div>
-                  <p className="text-xs font-semibold text-green-800">Approved for Dispatch</p>
+                  <p className="text-xs font-semibold text-green-800">
+                    {isSample ? "Sample Approved" : "Approved for Dispatch"}
+                  </p>
                   {qc.approved_by_name && (
                     <p className="text-xs text-green-700">Approved by {qc.approved_by_name}</p>
                   )}
@@ -1083,27 +1126,15 @@ function QCDetailModal({ qc, currentEmployee, onClose, onApprove, onReject }: QC
                   )}
                 </div>
               </div>
-
-              {/* Show completed checklist in read-only mode */}
               {qc.post_dev_checklist && (
                 <div className="p-4 bg-green-50/30 border border-green-200 rounded-xl">
                   <div className="flex items-center gap-2 mb-3">
                     <FileCheck size={14} className="text-green-600" />
-                    <div>
-                      <p className="text-xs font-bold text-green-800">Post Press Checklist ✓ Verified</p>
-                      {qc.checklist_verified_by_name && (
-                        <p className="text-[10px] text-green-600">
-                          Verified by {qc.checklist_verified_by_name}
-                          {qc.checklist_verified_date && (
-                            <> on {new Date(qc.checklist_verified_date).toLocaleDateString("en-IN")}</>
-                          )}
-                        </p>
-                      )}
-                    </div>
+                    <p className="text-xs font-bold text-green-800">Post Press Checklist ✓ Verified</p>
                   </div>
                   <PostDevChecklistPanel
                     checklist={qc.post_dev_checklist}
-                    onChange={() => { }}
+                    onChange={() => {}}
                     readOnly={true}
                   />
                 </div>
@@ -1112,13 +1143,13 @@ function QCDetailModal({ qc, currentEmployee, onClose, onApprove, onReject }: QC
           )}
 
           {/* Failed */}
-          {qc.overall_status === "Failed" && !canAct && (
+          {qc.overall_status === "Failed" && !canAct && !qc.approved_for_dispatch && (
             <div className="flex items-center gap-3 p-3 bg-red-50 border border-red-100 rounded-lg">
               <XCircle size={18} className="text-red-600 flex-shrink-0" />
               <div>
                 <p className="text-xs font-semibold text-red-800">QC Failed — Sent for Rework</p>
                 <p className="text-xs text-red-600 mt-0.5">
-                  Production order has been sent back to In Progress
+                  Job has been sent back to the machine operator for rework.
                 </p>
               </div>
             </div>
@@ -1131,19 +1162,19 @@ function QCDetailModal({ qc, currentEmployee, onClose, onApprove, onReject }: QC
 
 // ─── Main Component ───────────────────────────────────────────
 export function QualityControl() {
-  const [checks, setChecks] = useState<QualityCheck[]>([]);
-  const [jobs, setJobs] = useState<QCJob[]>([]);
-  const [stats, setStats] = useState<QCStats>({
+  const [checks,          setChecks]          = useState<QualityCheck[]>([]);
+  const [jobs,            setJobs]            = useState<QCJob[]>([]);
+  const [stats,           setStats]           = useState<QCStats>({
     pending: 0, passed: 0, failed: 0, rework: 0, approvalRate: 0, awaitingApproval: 0,
   });
   const [currentEmployee, setCurrentEmployee] = useState<CurrentEmployee | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("All");
-  const [showNewModal, setShowNewModal] = useState(false);
-  const [selectedQC, setSelectedQC] = useState<QualityCheck | null>(null);
-  const [preSelectedPO, setPreSelectedPO] = useState<string>("");
+  const [loading,         setLoading]         = useState(true);
+  const [error,           setError]           = useState<string | null>(null);
+  const [search,          setSearch]          = useState("");
+  const [statusFilter,    setStatusFilter]    = useState<string>("All");
+  const [showNewModal,    setShowNewModal]    = useState(false);
+  const [selectedQC,      setSelectedQC]      = useState<QualityCheck | null>(null);
+  const [preSelectedPO,   setPreSelectedPO]   = useState<string>("");
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -1156,9 +1187,9 @@ export function QualityControl() {
         api.getCurrentEmployee(),
       ]);
       if (checksData.status === "fulfilled") setChecks(checksData.value);
-      if (jobsData.status === "fulfilled") setJobs(jobsData.value);
-      if (statsData.status === "fulfilled") setStats(statsData.value);
-      if (empData.status === "fulfilled") setCurrentEmployee(empData.value);
+      if (jobsData.status   === "fulfilled") setJobs(jobsData.value);
+      if (statsData.status  === "fulfilled") setStats(statsData.value);
+      if (empData.status    === "fulfilled") setCurrentEmployee(empData.value);
     } catch {
       setError("Failed to load QC data");
     } finally {
@@ -1167,6 +1198,30 @@ export function QualityControl() {
   }, []);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // Real-time updates
+  useEffect(() => {
+    const channel = supabase
+      .channel("qc_realtime")
+      .on("postgres_changes", {
+        event:  "*",
+        schema: "public",
+        table:  "quality_checks",
+      }, () => { loadData(); })
+      .on("postgres_changes", {
+        event:  "UPDATE",
+        schema: "public",
+        table:  "production_orders",
+      }, () => { loadData(); })
+      .on("postgres_changes", {
+        event:  "UPDATE",
+        schema: "public",
+        table:  "sample_orders",
+      }, () => { loadData(); })
+      .subscribe();
+
+    return () => { channel.unsubscribe(); };
+  }, [loadData]);
 
   const handleCreate = async (payload: CreateQualityCheckRequest) => {
     await api.createQualityCheck(payload);
@@ -1188,18 +1243,13 @@ export function QualityControl() {
     setShowNewModal(true);
   };
 
-  const closeNewModal = () => {
-    setShowNewModal(false);
-    setPreSelectedPO("");
-  };
-
   const filtered = checks.filter((qc) => {
     const s = search.toLowerCase();
     const matchesSearch =
       search === "" ||
       (qc.sample_order_id || qc.production_order_id || "").toLowerCase().includes(s) ||
-      (qc.customer_name || "").toLowerCase().includes(s) ||
-      (qc.product_name || "").toLowerCase().includes(s);
+      (qc.customer_name   || "").toLowerCase().includes(s) ||
+      (qc.product_name    || "").toLowerCase().includes(s);
 
     let matchStatus = true;
     if (statusFilter === "Awaiting Approval") {
@@ -1209,18 +1259,14 @@ export function QualityControl() {
     } else if (statusFilter !== "All") {
       matchStatus = qc.overall_status === statusFilter;
     }
-
     return matchesSearch && matchStatus;
   });
 
-  const userRole = currentEmployee?.role || '';
-  const hasSubmitPerm = canSubmitQC(userRole);
+  const userRole       = currentEmployee?.role || "";
+  const hasSubmitPerm  = canSubmitQC(userRole);
   const hasApprovePerm = canApproveQC(userRole);
 
-  const pendingJobs = jobs.filter(
-    (po) => po.status === "QC Pending" && !po.hasActiveQC
-  );
-
+  const pendingJobs = jobs.filter((j) => j.status === "QC Pending" && !j.hasActiveQC);
   const awaitingApprovalChecks = checks.filter(
     (qc) => qc.overall_status === "Passed" && !qc.approved_for_dispatch
   );
@@ -1245,7 +1291,7 @@ export function QualityControl() {
           jobs={jobs}
           preSelectedOrderId={preSelectedPO}
           currentEmployee={currentEmployee}
-          onClose={closeNewModal}
+          onClose={() => { setShowNewModal(false); setPreSelectedPO(""); }}
           onSubmit={handleCreate}
         />
       )}
@@ -1264,9 +1310,7 @@ export function QualityControl() {
         <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-center gap-2">
           <AlertCircle size={14} className="text-red-500 flex-shrink-0" />
           <p className="text-sm text-red-600 flex-1">{error}</p>
-          <button onClick={() => setError(null)}>
-            <X size={14} className="text-red-400" />
-          </button>
+          <button onClick={() => setError(null)}><X size={14} className="text-red-400" /></button>
         </div>
       )}
 
@@ -1301,14 +1345,15 @@ export function QualityControl() {
         </div>
       </div>
 
-      {/* Role Info Banner */}
+      {/* Role Banner */}
       {currentEmployee && (
-        <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border text-xs ${hasApprovePerm
-          ? "bg-purple-50 border-purple-200 text-purple-800"
-          : hasSubmitPerm
+        <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border text-xs ${
+          hasApprovePerm
+            ? "bg-purple-50 border-purple-200 text-purple-800"
+            : hasSubmitPerm
             ? "bg-blue-50 border-blue-200 text-blue-800"
             : "bg-slate-50 border-slate-200 text-slate-700"
-          }`}>
+        }`}>
           <ShieldCheck size={14} className="flex-shrink-0" />
           <div>
             <span className="font-semibold">{currentEmployee.full_name}</span>
@@ -1316,10 +1361,10 @@ export function QualityControl() {
             <RoleBadge role={currentEmployee.role} />
             {" — "}
             {hasApprovePerm
-              ? "You can submit QC reports AND approve/reject them."
+              ? "You can submit QC reports AND approve / reject them."
               : hasSubmitPerm
-                ? "You can submit QC inspection reports. A Supervisor or Admin will approve."
-                : "You have view-only access to QC records."}
+              ? "You can submit QC reports. A Supervisor or Admin will approve."
+              : "You have view-only access to QC records."}
           </div>
         </div>
       )}
@@ -1327,12 +1372,12 @@ export function QualityControl() {
       {/* KPI Cards */}
       <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
         {[
-          { label: "Pending Inspection", value: stats.pending, icon: <Clock size={15} />, color: "text-amber-600 bg-amber-50", border: "border-amber-100" },
-          { label: "Awaiting Approval", value: stats.awaitingApproval, icon: <ShieldCheck size={15} />, color: "text-blue-600 bg-blue-50", border: "border-blue-100" },
-          { label: "Approved (MTD)", value: stats.passed, icon: <CheckCircle size={15} />, color: "text-green-600 bg-green-50", border: "border-green-100" },
-          { label: "Failed (MTD)", value: stats.failed, icon: <XCircle size={15} />, color: "text-red-600 bg-red-50", border: "border-red-100" },
-          { label: "Rework Required", value: stats.rework, icon: <RotateCcw size={15} />, color: "text-orange-600 bg-orange-50", border: "border-orange-100" },
-          { label: "Approval Rate", value: `${stats.approvalRate}%`, icon: <ShieldCheck size={15} />, color: "text-indigo-600 bg-indigo-50", border: "border-indigo-100" },
+          { label: "Pending Inspection", value: stats.pending,          icon: <Clock size={15} />,       color: "text-amber-600 bg-amber-50",   border: "border-amber-100"  },
+          { label: "Awaiting Approval",  value: stats.awaitingApproval, icon: <ShieldCheck size={15} />, color: "text-blue-600 bg-blue-50",     border: "border-blue-100"   },
+          { label: "Approved (MTD)",     value: stats.passed,           icon: <CheckCircle size={15} />, color: "text-green-600 bg-green-50",   border: "border-green-100"  },
+          { label: "Failed (MTD)",       value: stats.failed,           icon: <XCircle size={15} />,     color: "text-red-600 bg-red-50",       border: "border-red-100"    },
+          { label: "Rework Required",    value: stats.rework,           icon: <RotateCcw size={15} />,   color: "text-orange-600 bg-orange-50", border: "border-orange-100" },
+          { label: "Approval Rate",      value: `${stats.approvalRate}%`, icon: <ShieldCheck size={15} />, color: "text-indigo-600 bg-indigo-50", border: "border-indigo-100" },
         ].map((s) => (
           <div key={s.label} className={`bg-white rounded-xl border ${s.border} p-4 shadow-sm`}>
             <div className={`w-8 h-8 rounded-lg flex items-center justify-center mb-3 ${s.color}`}>
@@ -1344,7 +1389,7 @@ export function QualityControl() {
         ))}
       </div>
 
-      {/* Step 1 — Pending Inspections (submit roles only) */}
+      {/* Step 1 — Pending Inspections */}
       {hasSubmitPerm && pendingJobs.length > 0 && (
         <div className="bg-white border border-amber-200 rounded-xl overflow-hidden shadow-sm">
           <div className="flex items-center justify-between px-5 py-4 border-b border-amber-100 bg-amber-50/50">
@@ -1352,7 +1397,7 @@ export function QualityControl() {
               <AlertTriangle size={15} className="text-amber-500" />
               <div>
                 <h3 className="text-slate-900 text-sm font-semibold">Step 1 — Pending QC Inspection</h3>
-                <p className="text-slate-400 text-xs">Inspector submits quality ratings for these jobs</p>
+                <p className="text-slate-400 text-xs">Jobs waiting for inspector to submit QC ratings</p>
               </div>
             </div>
             <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-semibold">
@@ -1361,20 +1406,22 @@ export function QualityControl() {
           </div>
           <div className="divide-y divide-slate-50">
             {pendingJobs.map((po) => (
-              <div
-                key={po.order_id}
-                className="flex items-center justify-between gap-4 px-5 py-4 hover:bg-slate-50 transition-colors"
-              >
+              <div key={po.order_id} className="flex items-center justify-between gap-4 px-5 py-4 hover:bg-slate-50 transition-colors">
                 <div className="flex items-center gap-3 min-w-0">
                   <div className="w-9 h-9 rounded-lg bg-amber-100 flex items-center justify-center flex-shrink-0">
                     <Package size={15} className="text-amber-600" />
                   </div>
                   <div className="min-w-0">
-                    <div className="flex items-center gap-2 mb-0.5">
-                      <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-100 text-indigo-700">{po.job_type}</span>
+                    <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-100 text-indigo-700">
+                        {po.job_type}
+                      </span>
                       <p className="text-indigo-600 text-xs font-bold">{po.order_id}</p>
-                      <span className="text-slate-300">·</span>
-                      <p className="text-slate-500 text-xs">{po.quotation_id}</p>
+                      {po.rework_count > 0 && (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-orange-100 text-orange-700">
+                          ↩ Rework #{po.rework_count}
+                        </span>
+                      )}
                     </div>
                     <p className="text-slate-800 text-sm font-semibold truncate">{po.product_name}</p>
                     <div className="flex items-center gap-3 mt-0.5">
@@ -1394,7 +1441,8 @@ export function QualityControl() {
                     border border-indigo-200 rounded-lg hover:bg-indigo-50 transition-colors
                     font-medium flex-shrink-0"
                 >
-                  <Eye size={12} /> Start Inspection
+                  <Eye size={12} />
+                  {po.rework_count > 0 ? "Inspect Rework" : "Start Inspection"}
                 </button>
               </div>
             ))}
@@ -1402,7 +1450,7 @@ export function QualityControl() {
         </div>
       )}
 
-      {/* Step 2 — Awaiting Approval (approve roles only) */}
+      {/* Step 2 — Awaiting Approval */}
       {hasApprovePerm && awaitingApprovalChecks.length > 0 && (
         <div className="bg-white border border-blue-200 rounded-xl overflow-hidden shadow-sm">
           <div className="flex items-center justify-between px-5 py-4 border-b border-blue-100 bg-blue-50/50">
@@ -1411,7 +1459,7 @@ export function QualityControl() {
               <div>
                 <h3 className="text-slate-900 text-sm font-semibold">Step 2 — Awaiting Your Approval</h3>
                 <p className="text-slate-400 text-xs">
-                  QC passed by inspector — you ({currentEmployee?.role}) must approve the report
+                  QC passed — you ({currentEmployee?.role}) must approve
                 </p>
               </div>
             </div>
@@ -1421,24 +1469,26 @@ export function QualityControl() {
           </div>
           <div className="divide-y divide-slate-50">
             {awaitingApprovalChecks.map((qc) => (
-              <div
-                key={qc.qc_id}
-                className="flex items-center justify-between gap-4 px-5 py-4 hover:bg-slate-50 transition-colors"
-              >
+              <div key={qc.qc_id} className="flex items-center justify-between gap-4 px-5 py-4 hover:bg-slate-50 transition-colors">
                 <div className="flex items-center gap-3 min-w-0">
                   <div className="w-9 h-9 rounded-lg bg-blue-100 flex items-center justify-center flex-shrink-0">
                     <ShieldCheck size={15} className="text-blue-600" />
                   </div>
                   <div className="min-w-0">
-                    <div className="flex items-center gap-2 mb-0.5">
+                    <div className="flex items-center gap-2 mb-0.5 flex-wrap">
                       <p className="text-indigo-600 text-xs font-bold">QC #{qc.qc_id}</p>
                       <span className="text-slate-300">·</span>
                       <p className="text-slate-500 text-xs">{qc.sample_order_id || qc.production_order_id}</p>
+                      {qc.qc_cycle > 1 && (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-orange-100 text-orange-700">
+                          Cycle {qc.qc_cycle}
+                        </span>
+                      )}
                     </div>
                     <p className="text-slate-800 text-sm font-semibold truncate">{qc.product_name}</p>
                     <div className="flex items-center gap-3 mt-0.5">
                       <p className="text-slate-500 text-xs">{qc.customer_name}</p>
-                      <span className="text-xs text-slate-400">Inspected by {qc.checked_by_name}</span>
+                      <span className="text-xs text-slate-400">by {qc.checked_by_name}</span>
                       <span className="text-xs text-green-600 font-medium">All ratings ✓</span>
                     </div>
                   </div>
@@ -1457,32 +1507,33 @@ export function QualityControl() {
         </div>
       )}
 
-      {/* Info for non-approve roles when pending approvals exist */}
+      {/* Info for non-approve roles */}
       {!hasApprovePerm && awaitingApprovalChecks.length > 0 && (
         <div className="flex items-start gap-3 p-4 bg-blue-50 border border-blue-200 rounded-xl">
           <ShieldCheck size={15} className="text-blue-500 flex-shrink-0 mt-0.5" />
           <p className="text-xs text-blue-700">
             <span className="font-semibold">{awaitingApprovalChecks.length} QC report(s)</span> are
-            awaiting approval by a <strong>Supervisor</strong> or <strong>Admin</strong>.
-            Your role ({currentEmployee?.role}) cannot approve — contact your supervisor.
+            awaiting approval by a Supervisor or Admin.
+            Your role ({currentEmployee?.role}) cannot approve.
           </p>
         </div>
       )}
 
-      {/* QC History */}
+      {/* QC History Table */}
       <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 flex-wrap gap-3">
           <h3 className="text-slate-900 text-sm font-semibold">QC History</h3>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <div className="flex gap-1">
               {["All", "Awaiting Approval", "Approved", "Failed", "Pending"].map((s) => (
                 <button
                   key={s}
                   onClick={() => setStatusFilter(s)}
-                  className={`px-2.5 py-1 text-xs rounded-lg border transition-colors ${statusFilter === s
-                    ? "bg-indigo-600 text-white border-indigo-600"
-                    : "bg-white text-slate-600 border-slate-200 hover:border-slate-300"
-                    }`}
+                  className={`px-2.5 py-1 text-xs rounded-lg border transition-colors ${
+                    statusFilter === s
+                      ? "bg-indigo-600 text-white border-indigo-600"
+                      : "bg-white text-slate-600 border-slate-200 hover:border-slate-300"
+                  }`}
                 >
                   {s}
                 </button>
@@ -1526,7 +1577,7 @@ export function QualityControl() {
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-100">
                   {[
-                    "QC ID", "Production Order", "Customer", "Product",
+                    "QC ID", "Cycle", "Job", "Customer", "Product",
                     "Check Type", "Inspector", "Date",
                     "Color", "Print", "Material", "Dimensions",
                     "QC Result", "Supervisor", "Actions",
@@ -1544,16 +1595,33 @@ export function QualityControl() {
                       <span className="text-indigo-600 text-xs font-bold">#{qc.qc_id}</span>
                     </td>
                     <td className="px-4 py-3">
+                      <span className={`text-xs font-semibold px-1.5 py-0.5 rounded ${
+                        qc.qc_cycle > 1
+                          ? "bg-orange-100 text-orange-700"
+                          : "bg-slate-100 text-slate-500"
+                      }`}>
+                        {qc.qc_cycle}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
                       <div className="flex items-center gap-1.5">
-                        <span className="text-xs font-mono text-slate-700 font-medium">{qc.sample_order_id || qc.production_order_id}</span>
-                        {qc.sample_order_id && <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-100 text-indigo-700">Sample</span>}
+                        <span className="text-xs font-mono text-slate-700 font-medium">
+                          {qc.sample_order_id || qc.production_order_id}
+                        </span>
+                        {qc.sample_order_id && (
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-100 text-indigo-700">
+                            Sample
+                          </span>
+                        )}
                       </div>
                     </td>
                     <td className="px-4 py-3">
                       <span className="text-xs text-slate-600 whitespace-nowrap">{qc.customer_name}</span>
                     </td>
                     <td className="px-4 py-3">
-                      <span className="text-xs text-slate-700 font-medium truncate max-w-[120px] block">{qc.product_name}</span>
+                      <span className="text-xs text-slate-700 font-medium truncate max-w-[120px] block">
+                        {qc.product_name}
+                      </span>
                     </td>
                     <td className="px-4 py-3">
                       <span className="text-xs text-slate-500 whitespace-nowrap">{qc.check_type}</span>
@@ -1571,7 +1639,11 @@ export function QualityControl() {
                     <td className="px-4 py-3"><RatingBadge rating={qc.material_quality} /></td>
                     <td className="px-4 py-3"><RatingBadge rating={qc.dimensional_accuracy} /></td>
                     <td className="px-4 py-3">
-                      <StatusBadge status={qc.overall_status} />
+                      <StatusBadge status={
+                        qc.approved_for_dispatch ? "Approved" :
+                        qc.overall_status === "Passed" ? "Awaiting Approval" :
+                        qc.overall_status
+                      } />
                     </td>
                     <td className="px-4 py-3">
                       {qc.approved_for_dispatch ? (
@@ -1605,4 +1677,4 @@ export function QualityControl() {
       </div>
     </div>
   );
-}
+}//qc
