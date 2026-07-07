@@ -29,6 +29,7 @@ export function QuotationViewModal({ quotationId, onClose, onRefresh }: Quotatio
     const [showPrePressChecklist, setShowPrePressChecklist] = useState(false);
     const [prePressJobType, setPrePressJobType] = useState<'sample' | 'production'>('sample');
     const [creatingJob, setCreatingJob] = useState(false);
+    const [selectedChecklistData, setSelectedChecklistData] = useState<any>(null);
 
     useEffect(() => {
         const fetchQuotation = async () => {
@@ -59,6 +60,35 @@ export function QuotationViewModal({ quotationId, onClose, onRefresh }: Quotatio
         }
     }, [quotationId]);
 
+    // Helper to check if pre-press checklist is complete
+    const isPrePressChecklistComplete = (checklistData: any): boolean => {
+        if (!checklistData) return false;
+
+        // Check all boolean fields
+        const booleanFields = Object.keys(checklistData).filter(key =>
+            typeof checklistData[key] === 'boolean'
+        );
+        const allBooleanChecked = booleanFields.every(key => checklistData[key] === true);
+
+        // Check required text fields
+        const jobRefFilled = checklistData.job_number_reference_id?.trim() !== '';
+        const productNameFilled = checklistData.product_name_variant?.trim() !== '';
+        const cartonTypeFilled = checklistData.carton_type?.trim() !== '';
+        const checkerNameFilled = checklistData.checker_name?.trim() !== '';
+        const checkerDateFilled = checklistData.checker_date?.trim() !== '';
+        const approverNameFilled = checklistData.approver_name?.trim() !== '';
+        const approverDateFilled = checklistData.approver_date?.trim() !== '';
+
+        return allBooleanChecked &&
+            jobRefFilled &&
+            productNameFilled &&
+            cartonTypeFilled &&
+            checkerNameFilled &&
+            checkerDateFilled &&
+            approverNameFilled &&
+            approverDateFilled;
+    };
+
     // Handle creating a job with pre-press checklist
     const handleCreateJob = (jobType: 'sample' | 'production') => {
         // Check if there's already a completed pre-press checklist
@@ -66,28 +96,69 @@ export function QuotationViewModal({ quotationId, onClose, onRefresh }: Quotatio
             c => c.job_type === jobType
         );
 
-        if (existingChecklist) {
-            // If checklist exists, proceed to create job directly
-            if (confirm(`A pre-press checklist already exists for this ${jobType} job. Do you want to proceed with creating the ${jobType} job?`)) {
+        if (existingChecklist && isPrePressChecklistComplete(existingChecklist.checklist_data)) {
+            // If checklist exists and is complete, proceed to create job directly
+            if (confirm(`A completed pre-press checklist already exists for this ${jobType} job. Do you want to proceed?`)) {
                 createJobDirectly(jobType);
             }
+        } else if (existingChecklist && !isPrePressChecklistComplete(existingChecklist.checklist_data)) {
+            // If checklist exists but is incomplete, show it again
+            setSelectedChecklistData(existingChecklist.checklist_data);
+            setPrePressJobType(jobType);
+            setShowPrePressChecklist(true);
         } else {
-            // Show the pre-press checklist modal
+            // No checklist exists, show the pre-press checklist
+            setSelectedChecklistData(null);
             setPrePressJobType(jobType);
             setShowPrePressChecklist(true);
         }
     };
 
-    // Create job directly (when checklist already exists)
+    // Create job directly (when checklist already exists and is complete)
     const createJobDirectly = async (jobType: 'sample' | 'production') => {
+        if (!quotation) return;
+
         setCreatingJob(true);
         try {
-            // Call your existing job creation logic here
-            // This should be passed as a prop or use the same logic from parent
+            if (jobType === 'sample') {
+                // Create sample job
+                if (!quotation.customerId) {
+                    alert('No customer associated with this quotation.');
+                    setCreatingJob(false);
+                    return;
+                }
+
+                const productId = quotation.products && quotation.products.length > 0
+                    ? quotation.products[0].id
+                    : 1;
+
+                await api.createSampleJob({
+                    quotationId: quotation.id,
+                    customerId: quotation.customerId,
+                    productId: productId,
+                    sampleQuantity: 5,
+                    sampleCost: quotation.commercials.total * 0.05,
+                    assignedTo: null,
+                    dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+                });
+
+                alert(`✅ Sample job created successfully! Please assign machine and operator in Sample Jobs.`);
+            } else {
+                // Create production job
+                await api.createProductionJob({
+                    quotationId: quotation.id,
+                    sampleJobId: quotation.sampleJobId,
+                    deliveryDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+                    priority: 'Medium',
+                });
+
+                alert(`✅ Production job created successfully! Please assign machine and operator in Production Jobs.`);
+            }
+
             if (onRefresh) {
                 onRefresh();
             }
-            alert(`✅ ${jobType.charAt(0).toUpperCase() + jobType.slice(1)} job created successfully!`);
+            onClose();
         } catch (err) {
             console.error('Error creating job:', err);
             alert('❌ Failed to create job. Please try again.');
@@ -99,6 +170,7 @@ export function QuotationViewModal({ quotationId, onClose, onRefresh }: Quotatio
     // Handle pre-press checklist completion
     const handlePrePressComplete = async (data: any) => {
         setShowPrePressChecklist(false);
+
         // Refresh the quotation to show updated checklist status
         const { data: checklistsData } = await supabase
             .from('pre_press_checklists')
@@ -137,16 +209,6 @@ export function QuotationViewModal({ quotationId, onClose, onRefresh }: Quotatio
         if (status === "Production Created") return "text-blue-600";
         if (status === "N/A") return "text-slate-300";
         return "text-slate-500";
-    };
-
-    // Check if a checklist is complete
-    const isChecklistComplete = (checklistData: any) => {
-        if (!checklistData) return false;
-        // Check all boolean fields (excluding text fields and sign-off fields)
-        const booleanFields = Object.keys(checklistData).filter(key =>
-            typeof checklistData[key] === 'boolean'
-        );
-        return booleanFields.every(key => checklistData[key] === true);
     };
 
     if (loading) {
@@ -199,6 +261,7 @@ export function QuotationViewModal({ quotationId, onClose, onRefresh }: Quotatio
                     jobType={prePressJobType}
                     onComplete={handlePrePressComplete}
                     onCancel={() => setShowPrePressChecklist(false)}
+                    initialData={selectedChecklistData}
                 />
             )}
 
@@ -316,9 +379,9 @@ export function QuotationViewModal({ quotationId, onClose, onRefresh }: Quotatio
                                 {sampleChecklist && (
                                     <div className="mb-2">
                                         <div className="flex items-center gap-1.5 text-xs">
-                                            <ListChecks size={12} className={isChecklistComplete(sampleChecklist.checklist_data) ? "text-green-500" : "text-amber-500"} />
-                                            <span className={isChecklistComplete(sampleChecklist.checklist_data) ? "text-green-600" : "text-amber-600"}>
-                                                {isChecklistComplete(sampleChecklist.checklist_data) ? "Pre-Press Checklist Complete ✓" : "Pre-Press Checklist Incomplete"}
+                                            <ListChecks size={12} className={isPrePressChecklistComplete(sampleChecklist.checklist_data) ? "text-green-500" : "text-amber-500"} />
+                                            <span className={isPrePressChecklistComplete(sampleChecklist.checklist_data) ? "text-green-600" : "text-amber-600"}>
+                                                {isPrePressChecklistComplete(sampleChecklist.checklist_data) ? "Pre-Press Checklist Complete ✓" : "Pre-Press Checklist Incomplete"}
                                             </span>
                                         </div>
                                         <p className="text-[10px] text-slate-400">
@@ -359,9 +422,9 @@ export function QuotationViewModal({ quotationId, onClose, onRefresh }: Quotatio
                                 {productionChecklist && (
                                     <div className="mb-2">
                                         <div className="flex items-center gap-1.5 text-xs">
-                                            <ListChecks size={12} className={isChecklistComplete(productionChecklist.checklist_data) ? "text-green-500" : "text-amber-500"} />
-                                            <span className={isChecklistComplete(productionChecklist.checklist_data) ? "text-green-600" : "text-amber-600"}>
-                                                {isChecklistComplete(productionChecklist.checklist_data) ? "Pre-Press Checklist Complete ✓" : "Pre-Press Checklist Incomplete"}
+                                            <ListChecks size={12} className={isPrePressChecklistComplete(productionChecklist.checklist_data) ? "text-green-500" : "text-amber-500"} />
+                                            <span className={isPrePressChecklistComplete(productionChecklist.checklist_data) ? "text-green-600" : "text-amber-600"}>
+                                                {isPrePressChecklistComplete(productionChecklist.checklist_data) ? "Pre-Press Checklist Complete ✓" : "Pre-Press Checklist Incomplete"}
                                             </span>
                                         </div>
                                         <p className="text-[10px] text-slate-400">

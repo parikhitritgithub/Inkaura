@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import {
   Play, Pause, AlertTriangle, CheckCircle, Clock,
   X, Cpu, RefreshCw, FlaskConical, Factory, Package,
-  Eye, RotateCcw, ChevronDown, AlertCircle,
+  Eye, RotateCcw, ChevronDown, AlertCircle, Printer, Save
 } from "lucide-react";
 import { supabase, updateJobStatus, logWorkflowActivity } from "../server/api";
 
@@ -11,55 +11,55 @@ import { supabase, updateJobStatus, logWorkflowActivity } from "../server/api";
 // ============================================================
 
 interface QCRecord {
-  qc_id:                 number;
-  overall_status:        string;
-  workflow_status:       string;
-  rework_required:       boolean;
-  rework_description?:   string;
-  defect_description?:   string;
+  qc_id: number;
+  overall_status: string;
+  workflow_status: string;
+  rework_required: boolean;
+  rework_description?: string;
+  defect_description?: string;
   approved_for_dispatch: boolean;
-  qc_cycle:              number;
-  checked_by_name?:      string;
-  check_date?:           string;
-  color_accuracy?:       string;
-  print_quality?:        string;
-  material_quality?:     string;
+  qc_cycle: number;
+  checked_by_name?: string;
+  check_date?: string;
+  color_accuracy?: string;
+  print_quality?: string;
+  material_quality?: string;
   dimensional_accuracy?: string;
-  finishing_quality?:    string;
-  binding_quality?:      string;
-  defect_type?:          string;
-  defect_quantity?:      number;
-  notes?:                string;
+  finishing_quality?: string;
+  binding_quality?: string;
+  defect_type?: string;
+  defect_quantity?: number;
+  notes?: string;
 }
 
 interface AssignedJob {
-  id:            string;
-  type:          "sample" | "production";
-  product:       string;
-  customer:      string;
-  quantity:      number;
-  assignedTo:    string;
-  machine:       string;
-  priority:      "High" | "Medium" | "Low";
-  status:        string;
-  progress:      number;
-  dueDate:       string;
-  createdDate:   string;
-  value:         number;
-  qcCycle:       number;
-  reworkCount:   number;
+  id: string;
+  type: "sample" | "production";
+  product: string;
+  customer: string;
+  quantity: number;
+  assignedTo: string;
+  machine: string;
+  priority: "High" | "Medium" | "Low";
+  status: string;
+  progress: number;
+  dueDate: string;
+  createdDate: string;
+  value: number;
+  qcCycle: number;
+  reworkCount: number;
   lastQcResult?: string;
-  currentQcId?:  number;
+  currentQcId?: number;
 }
 
 interface InventoryItem {
-  id:       number;
-  item:     string;
+  id: number;
+  item: string;
   category: string;
-  current:  number;
-  min:      number;
-  max:      number;
-  unit:     string;
+  current: number;
+  min: number;
+  max: number;
+  unit: string;
   unitcost: number;
   supplier: string;
 }
@@ -88,12 +88,10 @@ const PAUSE_REASONS = [
 
 // ============================================================
 // SAFE SUPABASE INSERT
-// Supabase returns PromiseLike not Promise so .catch() fails.
-// Always use this wrapper for optional/log inserts.
 // ============================================================
 
 async function safeInsert(
-  table:   string,
+  table: string,
   payload: Record<string, unknown>,
 ): Promise<void> {
   try {
@@ -104,36 +102,270 @@ async function safeInsert(
 }
 
 // ============================================================
-// SMALL UI HELPERS
+// FACTORY SLIP MODAL
 // ============================================================
 
-function PriorityBadge({ priority }: { priority: string }) {
-  const map: Record<string, string> = {
-    High:   "bg-red-50 text-red-700 border-red-200",
-    Medium: "bg-amber-50 text-amber-700 border-amber-200",
-    Low:    "bg-slate-50 text-slate-600 border-slate-200",
-  };
-  return (
-    <span className={`inline-flex px-2 py-0.5 rounded border text-xs font-medium ${map[priority] ?? map.Medium}`}>
-      {priority} Priority
-    </span>
-  );
+interface FactorySlipModalProps {
+  job: AssignedJob;
+  onClose: () => void;
+  onSave: () => void;
 }
 
-function RatingBadge({ label, value }: { label: string; value: string }) {
-  const map: Record<string, string> = {
-    Excellent: "bg-green-100 text-green-700",
-    Good:      "bg-blue-100 text-blue-700",
-    Fair:      "bg-amber-100 text-amber-700",
-    Poor:      "bg-red-100 text-red-700",
-    NA:        "bg-slate-100 text-slate-500",
+function FactorySlipModal({ job, onClose, onSave }: FactorySlipModalProps) {
+  const [loading, setLoading] = useState(false);
+  const [slipData, setSlipData] = useState({
+    // Auto-filled fields
+    jobName: job.product || '',
+    customer: job.customer || '',
+    copies: job.quantity || 0,
+    jobSize: '',
+    colors: '',
+    date: new Date().toISOString().split('T')[0],
+    slipNumber: `FS-${job.id}-${Date.now().toString().slice(-4)}`,
+    machineMan: job.assignedTo || '',
+    supervisor: '',
+
+    // Supervisor fills
+    paperName: '',
+    paperQuantity: 0,
+    additionalSheets: 0,
+    boardSheets: 0,
+    coverPaper: '',
+    remarks: '',
+  });
+
+  // Load existing factory slip data if any
+  useEffect(() => {
+    const loadSlipData = async () => {
+      try {
+        const { data } = await supabase
+          .from('factory_slips')
+          .select('*')
+          .eq('job_id', job.id)
+          .eq('job_type', job.type)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single();
+
+        if (data) {
+          setSlipData({
+            jobName: data.job_name || job.product,
+            customer: data.customer || job.customer,
+            copies: data.copies || job.quantity,
+            jobSize: data.job_size || '',
+            colors: data.colors || '',
+            date: data.slip_date || new Date().toISOString().split('T')[0],
+            slipNumber: data.slip_number || `FS-${job.id}-${Date.now().toString().slice(-4)}`,
+            machineMan: data.machine_man || job.assignedTo,
+            supervisor: data.supervisor || '',
+            paperName: data.paper_name || '',
+            paperQuantity: data.paper_quantity || 0,
+            additionalSheets: data.additional_sheets || 0,
+            boardSheets: data.board_sheets || 0,
+            coverPaper: data.cover_paper || '',
+            remarks: data.remarks || '',
+          });
+        }
+      } catch (error) {
+        console.log('No existing slip found, using default values');
+      }
+    };
+    loadSlipData();
+  }, [job]);
+
+  const handleSave = async () => {
+    if (!slipData.supervisor.trim()) {
+      alert('Please enter supervisor name');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const { error } = await supabase
+        .from('factory_slips')
+        .upsert({
+          job_id: job.id,
+          job_type: job.type,
+          job_name: slipData.jobName,
+          customer: slipData.customer,
+          copies: slipData.copies,
+          job_size: slipData.jobSize,
+          colors: slipData.colors,
+          slip_date: slipData.date,
+          slip_number: slipData.slipNumber,
+          machine_man: slipData.machineMan,
+          supervisor: slipData.supervisor,
+          paper_name: slipData.paperName,
+          paper_quantity: slipData.paperQuantity,
+          additional_sheets: slipData.additionalSheets,
+          board_sheets: slipData.boardSheets,
+          cover_paper: slipData.coverPaper,
+          remarks: slipData.remarks,
+          updated_at: new Date().toISOString(),
+        }, {
+          onConflict: 'job_id,job_type'
+        });
+
+      if (error) throw error;
+
+      alert('✅ Factory Slip saved successfully!');
+      onSave();
+      onClose();
+    } catch (error) {
+      console.error('Error saving factory slip:', error);
+      alert('Failed to save factory slip. Please try again.');
+    } finally {
+      setLoading(false);
+    }
   };
+
+  const handlePrint = () => {
+    window.print();
+  };
+
   return (
-    <div className="flex items-center justify-between p-2 bg-slate-50 rounded-lg border border-slate-100">
-      <span className="text-xs text-slate-600">{label}</span>
-      <span className={`text-xs font-semibold px-2 py-0.5 rounded ${map[value] ?? map.NA}`}>
-        {value}
-      </span>
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[70] p-4">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[95vh] overflow-y-auto">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-slate-50">
+          <div>
+            <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+              <Printer size={20} className="text-indigo-600" />
+              Factory Slip - {job.id}
+            </h3>
+            <p className="text-xs text-slate-500 mt-0.5">Auto-filled fields are locked. Supervisor fills paper details.</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 text-slate-400 hover:text-slate-600">
+            <X size={20} />
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="p-6 space-y-6" id="factory-slip-print">
+          {/* Job Info - Auto-filled */}
+          <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
+            <p className="text-xs font-semibold text-indigo-700 mb-3 flex items-center gap-2">
+              <Clock size={14} /> Auto-filled Fields (Read Only)
+            </p>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div>
+                <label className="block text-xs text-slate-500 mb-0.5">Job Name</label>
+                <input type="text" className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-900" value={slipData.jobName} readOnly />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-500 mb-0.5">Customer</label>
+                <input type="text" className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-900" value={slipData.customer} readOnly />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-500 mb-0.5">Copies</label>
+                <input type="number" className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-900" value={slipData.copies} readOnly />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-500 mb-0.5">Slip Number</label>
+                <input type="text" className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-900" value={slipData.slipNumber} readOnly />
+              </div>
+            </div>
+          </div>
+
+          {/* More Auto-filled */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div>
+              <label className="block text-xs text-slate-500 mb-0.5">Job Size</label>
+              <input type="text" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm" value={slipData.jobSize} onChange={e => setSlipData({ ...slipData, jobSize: e.target.value })} placeholder="e.g. 15x20" />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-500 mb-0.5">Colors</label>
+              <input type="text" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm" value={slipData.colors} onChange={e => setSlipData({ ...slipData, colors: e.target.value })} placeholder="e.g. 4+0" />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-500 mb-0.5">Date</label>
+              <input type="date" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm" value={slipData.date} onChange={e => setSlipData({ ...slipData, date: e.target.value })} />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-500 mb-0.5">Machine Man</label>
+              <input type="text" className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-900" value={slipData.machineMan} readOnly />
+            </div>
+          </div>
+
+          {/* Supervisor Fills */}
+          <div className="border-t-2 border-dashed border-amber-300 pt-4">
+            <div className="flex items-center gap-2 mb-4">
+              <span className="px-2 py-0.5 bg-amber-100 text-amber-700 rounded text-xs font-bold">SUPERVISOR SECTION</span>
+              <span className="text-xs text-slate-400">— Fill the fields below</span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-0.5">Supervisor Name *</label>
+                <input type="text" className="w-full px-3 py-2 border-2 border-amber-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500" value={slipData.supervisor} onChange={e => setSlipData({ ...slipData, supervisor: e.target.value })} placeholder="Enter supervisor name" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-0.5">Paper Name</label>
+                <input type="text" className="w-full px-3 py-2 border-2 border-amber-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500" value={slipData.paperName} onChange={e => setSlipData({ ...slipData, paperName: e.target.value })} placeholder="e.g. Art Card 300 GSM" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-0.5">Paper Quantity</label>
+                <input type="number" className="w-full px-3 py-2 border-2 border-amber-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500" value={slipData.paperQuantity || ''} onChange={e => setSlipData({ ...slipData, paperQuantity: Number(e.target.value) })} placeholder="Total sheets" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-0.5">Additional Sheets</label>
+                <input type="number" className="w-full px-3 py-2 border-2 border-amber-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500" value={slipData.additionalSheets || ''} onChange={e => setSlipData({ ...slipData, additionalSheets: Number(e.target.value) })} placeholder="Extra sheets" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-0.5">Board Sheets</label>
+                <input type="number" className="w-full px-3 py-2 border-2 border-amber-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500" value={slipData.boardSheets || ''} onChange={e => setSlipData({ ...slipData, boardSheets: Number(e.target.value) })} placeholder="Board sheets" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-0.5">Cover Paper</label>
+                <input type="text" className="w-full px-3 py-2 border-2 border-amber-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500" value={slipData.coverPaper} onChange={e => setSlipData({ ...slipData, coverPaper: e.target.value })} placeholder="e.g. Cover 200 GSM" />
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <label className="block text-xs font-semibold text-slate-700 mb-0.5">Remarks</label>
+              <textarea rows={2} className="w-full px-3 py-2 border-2 border-amber-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500" value={slipData.remarks} onChange={e => setSlipData({ ...slipData, remarks: e.target.value })} placeholder="Any special instructions..." />
+            </div>
+          </div>
+
+          {/* Footer note */}
+          <div className="text-xs text-slate-400 border-t border-slate-200 pt-4 flex items-center gap-2">
+            <Printer size={14} className="text-slate-300" />
+            <span>Printed copy goes to: <strong>Inventory</strong> and <strong>Machine Operator</strong></span>
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 rounded-b-xl flex justify-end gap-3">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handlePrint}
+            className="px-4 py-2 text-sm font-medium text-white bg-slate-800 rounded-lg hover:bg-slate-900 transition-colors flex items-center gap-2"
+          >
+            <Printer size={16} /> Print Factory Slip
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={loading || !slipData.supervisor.trim()}
+            className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+          >
+            {loading ? (
+              <>
+                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                Saving...
+              </>
+            ) : (
+              <>
+                <Save size={16} /> Save Factory Slip
+              </>
+            )}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -143,11 +375,11 @@ function RatingBadge({ label, value }: { label: string; value: string }) {
 // ============================================================
 
 interface QCReportModalProps {
-  qc:            QCRecord;
-  job:           AssignedJob;
-  onClose:       () => void;
+  qc: QCRecord;
+  job: AssignedJob;
+  onClose: () => void;
   onStartRework: (note: string) => Promise<void>;
-  updating:      boolean;
+  updating: boolean;
 }
 
 function QCReportModal({
@@ -205,14 +437,14 @@ function QCReportModal({
         {/* Job Summary */}
         <div className="grid grid-cols-3 gap-3 text-xs mb-4">
           {[
-            ["Job ID",    job.id],
-            ["Quantity",  `${job.quantity.toLocaleString()} pcs`],
-            ["QC Cycle",  String(qc.qc_cycle)],
+            ["Job ID", job.id],
+            ["Quantity", `${job.quantity.toLocaleString()} pcs`],
+            ["QC Cycle", String(qc.qc_cycle)],
             ["Inspector", qc.checked_by_name || "QC Team"],
-            ["Date",      qc.check_date
+            ["Date", qc.check_date
               ? new Date(qc.check_date).toLocaleDateString("en-IN")
               : "—"],
-            ["Result",    "Failed — Rework Required"],
+            ["Result", "Failed — Rework Required"],
           ].map(([l, v]) => (
             <div key={l} className="bg-slate-50 rounded-lg p-2.5">
               <p className="text-slate-400 mb-0.5">{l}</p>
@@ -227,12 +459,12 @@ function QCReportModal({
             <p className="text-xs font-semibold text-slate-700 mb-2">Quality Ratings</p>
             <div className="grid grid-cols-2 gap-2">
               {[
-                { label: "Color Accuracy",      value: qc.color_accuracy       || "NA" },
-                { label: "Print Quality",        value: qc.print_quality        || "NA" },
-                { label: "Material Quality",     value: qc.material_quality     || "NA" },
+                { label: "Color Accuracy", value: qc.color_accuracy || "NA" },
+                { label: "Print Quality", value: qc.print_quality || "NA" },
+                { label: "Material Quality", value: qc.material_quality || "NA" },
                 { label: "Dimensional Accuracy", value: qc.dimensional_accuracy || "NA" },
-                { label: "Finishing Quality",    value: qc.finishing_quality    || "NA" },
-                { label: "Binding Quality",      value: qc.binding_quality      || "NA" },
+                { label: "Finishing Quality", value: qc.finishing_quality || "NA" },
+                { label: "Binding Quality", value: qc.binding_quality || "NA" },
               ].map((r) => (
                 <RatingBadge key={r.label} label={r.label} value={r.value} />
               ))}
@@ -330,11 +562,11 @@ function QCReportModal({
 // ============================================================
 
 interface SendToQCModalProps {
-  job:       AssignedJob;
-  isRework:  boolean;
-  onClose:   () => void;
+  job: AssignedJob;
+  isRework: boolean;
+  onClose: () => void;
   onConfirm: (note: string) => Promise<void>;
-  updating:  boolean;
+  updating: boolean;
 }
 
 function SendToQCModal({
@@ -434,18 +666,40 @@ function SendToQCModal({
 }
 
 // ============================================================
+// RATING BADGE
+// ============================================================
+
+function RatingBadge({ label, value }: { label: string; value: string }) {
+  const map: Record<string, string> = {
+    Excellent: "bg-green-100 text-green-700",
+    Good: "bg-blue-100 text-blue-700",
+    Fair: "bg-amber-100 text-amber-700",
+    Poor: "bg-red-100 text-red-700",
+    NA: "bg-slate-100 text-slate-500",
+  };
+  return (
+    <div className="flex items-center justify-between p-2 bg-slate-50 rounded-lg border border-slate-100">
+      <span className="text-xs text-slate-600">{label}</span>
+      <span className={`text-xs font-semibold px-2 py-0.5 rounded ${map[value] ?? map.NA}`}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
+// ============================================================
 // PAUSE MODAL
 // ============================================================
 
 interface PauseModalProps {
-  onClose:   () => void;
+  onClose: () => void;
   onConfirm: (reason: string, note: string) => Promise<void>;
-  updating:  boolean;
+  updating: boolean;
 }
 
 function PauseModal({ onClose, onConfirm, updating }: PauseModalProps) {
   const [reason, setReason] = useState("");
-  const [note,   setNote]   = useState("");
+  const [note, setNote] = useState("");
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -520,18 +774,18 @@ function PauseModal({ onClose, onConfirm, updating }: PauseModalProps) {
 
 interface MaterialModalProps {
   inventoryItems: InventoryItem[];
-  onClose:        () => void;
-  onConfirm:      (itemId: string, used: number, waste: number, note: string) => Promise<void>;
-  updating:       boolean;
+  onClose: () => void;
+  onConfirm: (itemId: string, used: number, waste: number, note: string) => Promise<void>;
+  updating: boolean;
 }
 
 function MaterialModal({
   inventoryItems, onClose, onConfirm, updating,
 }: MaterialModalProps) {
   const [selectedItem, setSelectedItem] = useState("");
-  const [used,         setUsed]         = useState(0);
-  const [waste,        setWaste]        = useState(0);
-  const [note,         setNote]         = useState("");
+  const [used, setUsed] = useState(0);
+  const [waste, setWaste] = useState(0);
+  const [note, setNote] = useState("");
 
   const item = inventoryItems.find((i) => String(i.id) === selectedItem);
 
@@ -648,9 +902,9 @@ function MaterialModal({
 // ============================================================
 
 interface IssueModalProps {
-  onClose:   () => void;
+  onClose: () => void;
   onConfirm: (type: string, desc: string) => Promise<void>;
-  updating:  boolean;
+  updating: boolean;
 }
 
 function IssueModal({ onClose, onConfirm, updating }: IssueModalProps) {
@@ -725,11 +979,11 @@ function IssueModal({ onClose, onConfirm, updating }: IssueModalProps) {
 // ============================================================
 
 interface JobCardProps {
-  job:                 AssignedJob;
-  onStatusUpdate:      () => void;
-  inventoryItems:      InventoryItem[];
-  onInventoryUpdate:   () => void;
-  currentEmployeeId:   number;
+  job: AssignedJob;
+  onStatusUpdate: () => void;
+  inventoryItems: InventoryItem[];
+  onInventoryUpdate: () => void;
+  currentEmployeeId: number;
   currentEmployeeName: string;
 }
 
@@ -741,30 +995,30 @@ function JobCard({
   currentEmployeeId,
   currentEmployeeName,
 }: JobCardProps) {
-  const [updating,    setUpdating]    = useState(false);
-  const [latestQC,    setLatestQC]    = useState<QCRecord | null>(null);
-  const [loadingQC,   setLoadingQC]   = useState(false);
+  const [updating, setUpdating] = useState(false);
+  const [latestQC, setLatestQC] = useState<QCRecord | null>(null);
+  const [loadingQC, setLoadingQC] = useState(false);
   const [activeModal, setActiveModal] = useState<
-    "" | "qcReport" | "sendToQC" | "pause" | "material" | "issue"
+    "" | "qcReport" | "sendToQC" | "pause" | "material" | "issue" | "factorySlip"
   >("");
 
-  const isSample     = job.type === "sample";
+  const isSample = job.type === "sample";
   const isProduction = job.type === "production";
 
   // ── Derived booleans ──────────────────────────────────────────
   const isReworkRequired = job.status === "Rework Required";
-  const isPending        = job.status === "Pending";
-  const isRunning        = job.status === "In Progress";
-  const isQCPending      = job.status === "QC Pending";
-  const isCompleted      = job.status === "Completed";
-  const isApproved       = job.status === "Approved" || job.status === "Awaiting Approval";
-  const isPackaged       = job.status === "Packaged";
-  const isDispatched     = job.status === "Dispatched";
+  const isPending = job.status === "Pending";
+  const isRunning = job.status === "In Progress";
+  const isQCPending = job.status === "QC Pending";
+  const isCompleted = job.status === "Completed";
+  const isApproved = job.status === "Approved" || job.status === "Awaiting Approval";
+  const isDispatched = job.status === "Dispatched";
 
-  const canStart       = isPending;
-  const canPause       = isRunning;
-  const canSendToQC    = isRunning;
+  const canStart = isPending;
+  const canPause = isRunning;
+  const canSendToQC = isRunning;
   const canStartRework = isReworkRequired;
+  const canFactorySlip = isRunning || isReworkRequired;
 
   // ── Auto-load QC when rework required ────────────────────────
   useEffect(() => {
@@ -772,7 +1026,7 @@ function JobCard({
       setLoadingQC(true);
       fetchLatestQC().finally(() => setLoadingQC(false));
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [job.id, job.status]);
 
   const fetchLatestQC = async (): Promise<void> => {
@@ -810,25 +1064,25 @@ function JobCard({
       if (error || !data) return;
 
       setLatestQC({
-        qc_id:                data.qc_id,
-        overall_status:       data.overall_status,
-        workflow_status:      data.workflow_status         || "Rejected",
-        rework_required:      data.rework_required         || false,
-        rework_description:   data.rework_description,
-        defect_description:   data.defect_description,
-        defect_type:          data.defect_type,
-        defect_quantity:      data.defect_quantity         || 0,
-        approved_for_dispatch: data.approved_for_dispatch  || false,
-        qc_cycle:             data.qc_cycle                || 1,
-        notes:                data.notes,
-        check_date:           data.check_date,
-        checked_by_name:      (data as any).checked_by_emp?.full_name || "QC Team",
-        color_accuracy:       data.color_accuracy,
-        print_quality:        data.print_quality,
-        material_quality:     data.material_quality,
+        qc_id: data.qc_id,
+        overall_status: data.overall_status,
+        workflow_status: data.workflow_status || "Rejected",
+        rework_required: data.rework_required || false,
+        rework_description: data.rework_description,
+        defect_description: data.defect_description,
+        defect_type: data.defect_type,
+        defect_quantity: data.defect_quantity || 0,
+        approved_for_dispatch: data.approved_for_dispatch || false,
+        qc_cycle: data.qc_cycle || 1,
+        notes: data.notes,
+        check_date: data.check_date,
+        checked_by_name: (data as any).checked_by_emp?.full_name || "QC Team",
+        color_accuracy: data.color_accuracy,
+        print_quality: data.print_quality,
+        material_quality: data.material_quality,
         dimensional_accuracy: data.dimensional_accuracy,
-        finishing_quality:    data.finishing_quality,
-        binding_quality:      data.binding_quality,
+        finishing_quality: data.finishing_quality,
+        binding_quality: data.binding_quality,
       });
     } catch (err) {
       console.error("Failed to fetch latest QC:", err);
@@ -878,7 +1132,7 @@ function JobCard({
     try {
       setUpdating(true);
 
-      const table  = isSample ? "sample_orders"   : "production_orders";
+      const table = isSample ? "sample_orders" : "production_orders";
       const column = isSample ? "sample_order_id" : "production_order_id";
 
       const { data: current } = await supabase
@@ -887,12 +1141,12 @@ function JobCard({
         .eq(column, job.id)
         .single();
 
-      const currentCycle = current?.qc_cycle    || 0;
-      const reworkCount  = current?.rework_count || 0;
+      const currentCycle = current?.qc_cycle || 0;
+      const reworkCount = current?.rework_count || 0;
 
       const updatePayload: Record<string, unknown> = {
-        status:       "QC Pending",
-        qc_cycle:     currentCycle,
+        status: "QC Pending",
+        qc_cycle: currentCycle,
         rework_count: reworkCount,
       };
 
@@ -918,16 +1172,11 @@ function JobCard({
     }
   };
 
-  // ── KEY FIX ───────────────────────────────────────────────────
-  // progress column only exists on production_orders
-  // sample_orders does NOT have a progress column
-  // Sending progress:0 to sample_orders causes a 400 PGRST204 error
-  // ─────────────────────────────────────────────────────────────
   const handleStartRework = async (note: string) => {
     try {
       setUpdating(true);
 
-      const table  = isSample ? "sample_orders"   : "production_orders";
+      const table = isSample ? "sample_orders" : "production_orders";
       const column = isSample ? "sample_order_id" : "production_order_id";
 
       const { data: current } = await supabase
@@ -937,26 +1186,22 @@ function JobCard({
         .single();
 
       const newReworkCount = (current?.rework_count || 0) + 1;
-      const newQCCycle     = (current?.qc_cycle     || 0) + 1;
+      const newQCCycle = (current?.qc_cycle || 0) + 1;
 
-      // Build payload carefully — sample_orders has no progress column
       const reworkPayload: Record<string, unknown> = {
-        status:       "In Progress",
+        status: "In Progress",
         rework_count: newReworkCount,
-        qc_cycle:     newQCCycle,
+        qc_cycle: newQCCycle,
       };
 
       if (isSample) {
-        // sample_orders: clear customer_feedback, no progress column
         reworkPayload.customer_feedback = null;
       } else {
-        // production_orders: reset progress to 0
         reworkPayload.progress = 0;
       }
 
       await updateJobStatus(job.type, job.id, reworkPayload);
 
-      // Mark old QC record as closed
       if (latestQC) {
         await supabase
           .from("quality_checks")
@@ -991,9 +1236,9 @@ function JobCard({
 
   const handleMaterialUsage = async (
     itemId: string,
-    used:   number,
-    waste:  number,
-    note:   string,
+    used: number,
+    waste: number,
+    note: string,
   ) => {
     try {
       setUpdating(true);
@@ -1005,19 +1250,19 @@ function JobCard({
       await supabase
         .from("inventory")
         .update({
-          current:    inventoryItem.current - used,
+          current: inventoryItem.current - used,
           updated_at: new Date().toISOString(),
         })
         .eq("id", inventoryItem.id);
 
       await safeInsert("material_usage_logs", {
-        job_id:            job.id,
-        job_type:          job.type,
+        job_id: job.id,
+        job_type: job.type,
         inventory_item_id: inventoryItem.id,
-        quantity_used:     used,
-        quantity_waste:    waste || 0,
-        notes:             note,
-        timestamp:         new Date().toISOString(),
+        quantity_used: used,
+        quantity_waste: waste || 0,
+        notes: note,
+        timestamp: new Date().toISOString(),
       });
 
       setActiveModal("");
@@ -1040,12 +1285,12 @@ function JobCard({
       setUpdating(true);
 
       await safeInsert("job_issue_logs", {
-        job_id:      job.id,
-        job_type:    job.type,
-        issue_type:  type,
+        job_id: job.id,
+        job_type: job.type,
+        issue_type: type,
         description: desc,
         reported_by: currentEmployeeName,
-        timestamp:   new Date().toISOString(),
+        timestamp: new Date().toISOString(),
       });
 
       await logWorkflowActivity(
@@ -1068,41 +1313,41 @@ function JobCard({
 
   const getStatusStyle = () => {
     if (isReworkRequired) return "bg-red-50 text-red-700 border-red-200";
-    if (isRunning)        return "bg-indigo-50 text-indigo-700 border-indigo-200";
-    if (isQCPending)      return "bg-amber-50 text-amber-700 border-amber-200";
-    if (isCompleted)      return "bg-green-50 text-green-700 border-green-200";
-    if (isApproved)       return "bg-green-50 text-green-700 border-green-200";
-    if (isDispatched)     return "bg-slate-100 text-slate-600 border-slate-200";
+    if (isRunning) return "bg-indigo-50 text-indigo-700 border-indigo-200";
+    if (isQCPending) return "bg-amber-50 text-amber-700 border-amber-200";
+    if (isCompleted) return "bg-green-50 text-green-700 border-green-200";
+    if (isApproved) return "bg-green-50 text-green-700 border-green-200";
+    if (isDispatched) return "bg-slate-100 text-slate-600 border-slate-200";
     return "bg-slate-100 text-slate-600 border-slate-200";
   };
 
   const getStatusLabel = () => {
     if (isReworkRequired) return "⚠️ Rework Required";
-    if (isQCPending)      return "🔍 QC Pending";
-    if (isRunning)        return "▶ Running";
-    if (isPending)        return "Pending";
+    if (isQCPending) return "🔍 QC Pending";
+    if (isRunning) return "▶ Running";
+    if (isPending) return "Pending";
     return job.status;
   };
 
   const getProgressColor = () => {
     if (isReworkRequired) return "bg-red-400";
-    if (isRunning)        return "bg-indigo-500";
-    if (isCompleted)      return "bg-green-500";
+    if (isRunning) return "bg-indigo-500";
+    if (isCompleted) return "bg-green-500";
     return "bg-slate-400";
   };
 
   const getBorderColor = () => {
     if (isReworkRequired) return "border-red-200";
-    if (isRunning)        return "border-indigo-200";
-    if (isQCPending)      return "border-amber-200";
+    if (isRunning) return "border-indigo-200";
+    if (isQCPending) return "border-amber-200";
     return "border-slate-200";
   };
 
   const getTopBarColor = () => {
     if (isReworkRequired) return "bg-red-500";
-    if (isRunning)        return "bg-indigo-600";
-    if (isQCPending)      return "bg-amber-400";
-    if (isCompleted)      return "bg-green-500";
+    if (isRunning) return "bg-indigo-600";
+    if (isQCPending) return "bg-amber-400";
+    if (isCompleted) return "bg-green-500";
     return "bg-transparent";
   };
 
@@ -1148,6 +1393,13 @@ function JobCard({
           onClose={() => setActiveModal("")}
           onConfirm={handleIssueReport}
           updating={updating}
+        />
+      )}
+      {activeModal === "factorySlip" && (
+        <FactorySlipModal
+          job={job}
+          onClose={() => setActiveModal("")}
+          onSave={onStatusUpdate}
         />
       )}
 
@@ -1255,10 +1507,10 @@ function JobCard({
           {/* Details Grid */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
             {[
-              { label: "Job ID",   value: job.id                        },
-              { label: "Quantity", value: job.quantity.toLocaleString()  },
-              { label: "Machine",  value: job.machine                    },
-              { label: "Operator", value: job.assignedTo                 },
+              { label: "Job ID", value: job.id },
+              { label: "Quantity", value: job.quantity.toLocaleString() },
+              { label: "Machine", value: job.machine },
+              { label: "Operator", value: job.assignedTo },
             ].map((item) => (
               <div key={item.label} className="bg-slate-50 rounded-lg p-2.5">
                 <p className="text-slate-400 text-xs mb-0.5">{item.label}</p>
@@ -1295,6 +1547,18 @@ function JobCard({
 
           {/* Action Buttons */}
           <div className="flex flex-wrap gap-2">
+
+            {/* Factory Slip Button - Shows for running jobs */}
+            {canFactorySlip && (
+              <button
+                onClick={() => setActiveModal("factorySlip")}
+                className="flex items-center justify-center gap-1.5 px-3 py-2
+                  rounded-lg text-xs text-slate-700 border border-slate-300
+                  bg-white hover:bg-slate-50 transition-colors font-medium"
+              >
+                <Printer size={13} /> Factory Slip
+              </button>
+            )}
 
             {/* REWORK REQUIRED */}
             {canStartRework && (
@@ -1437,14 +1701,6 @@ function JobCard({
                 📦 Dispatched
               </div>
             )}
-
-            {/* PACKAGED */}
-            {isPackaged && (
-              <div className="flex-1 text-center py-2.5 px-3 rounded-lg text-xs
-                bg-blue-50 text-blue-700 border border-blue-200 font-medium">
-                📦 Packaged — Awaiting Dispatch
-              </div>
-            )}
           </div>
         </div>
       </div>
@@ -1453,17 +1709,34 @@ function JobCard({
 }
 
 // ============================================================
+// PRIORITY BADGE
+// ============================================================
+
+function PriorityBadge({ priority }: { priority: string }) {
+  const map: Record<string, string> = {
+    High: "bg-red-50 text-red-700 border-red-200",
+    Medium: "bg-amber-50 text-amber-700 border-amber-200",
+    Low: "bg-slate-50 text-slate-600 border-slate-200",
+  };
+  return (
+    <span className={`inline-flex px-2 py-0.5 rounded border text-xs font-medium ${map[priority] ?? map.Medium}`}>
+      {priority} Priority
+    </span>
+  );
+}
+
+// ============================================================
 // MAIN COMPONENT
 // ============================================================
 
 export function MachineOperator() {
-  const [assignedJobs,        setAssignedJobs]       = useState<AssignedJob[]>([]);
-  const [inventoryItems,      setInventoryItems]      = useState<InventoryItem[]>([]);
-  const [loading,             setLoading]             = useState(true);
-  const [error,               setError]               = useState<string | null>(null);
-  const [operatorName,        setOperatorName]        = useState("Loading...");
-  const [operatorMachine,     setOperatorMachine]     = useState("—");
-  const [currentEmployeeId,   setCurrentEmployeeId]   = useState(0);
+  const [assignedJobs, setAssignedJobs] = useState<AssignedJob[]>([]);
+  const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [operatorName, setOperatorName] = useState("Loading...");
+  const [operatorMachine, setOperatorMachine] = useState("—");
+  const [currentEmployeeId, setCurrentEmployeeId] = useState(0);
   const [currentEmployeeName, setCurrentEmployeeName] = useState("");
 
   const loadInventory = useCallback(async () => {
@@ -1484,7 +1757,7 @@ export function MachineOperator() {
       setError(null);
 
       const { data: { user } } = await supabase.auth.getUser();
-      let empId   = 0;
+      let empId = 0;
       let empName = "Admin User";
 
       if (user) {
@@ -1495,7 +1768,7 @@ export function MachineOperator() {
           .single();
 
         if (emp) {
-          empId   = emp.employee_id;
+          empId = emp.employee_id;
           empName = emp.full_name || "Admin User";
           setCurrentEmployeeId(empId);
           setCurrentEmployeeName(empName);
@@ -1540,23 +1813,23 @@ export function MachineOperator() {
       (prodData || []).forEach((po: any) => {
         const products = po.quotations?.quotation_products || [];
         combined.push({
-          id:           po.production_order_id,
-          type:         "production",
-          product:      products[0]?.product_name || "Custom Print Job",
-          customer:     po.quotations?.customers?.company_name || "Unknown",
-          quantity:     po.final_quantity || po.original_quantity || 0,
-          assignedTo:   po.employees?.full_name   || "Unassigned",
-          machine:      po.machines?.machine_name || "Unassigned",
-          priority:     po.priority    || "Medium",
-          status:       po.status      || "Pending",
-          progress:     po.progress    || 0,
-          dueDate:      po.delivery_date || "",
-          createdDate:  po.created_at    || new Date().toISOString(),
-          value:        po.quotations?.total_payment || 0,
-          qcCycle:      po.qc_cycle     || 0,
-          reworkCount:  po.rework_count || 0,
+          id: po.production_order_id,
+          type: "production",
+          product: products[0]?.product_name || "Custom Print Job",
+          customer: po.quotations?.customers?.company_name || "Unknown",
+          quantity: po.final_quantity || po.original_quantity || 0,
+          assignedTo: po.employees?.full_name || "Unassigned",
+          machine: po.machines?.machine_name || "Unassigned",
+          priority: po.priority || "Medium",
+          status: po.status || "Pending",
+          progress: po.progress || 0,
+          dueDate: po.delivery_date || "",
+          createdDate: po.created_at || new Date().toISOString(),
+          value: po.quotations?.total_payment || 0,
+          qcCycle: po.qc_cycle || 0,
+          reworkCount: po.rework_count || 0,
           lastQcResult: po.last_qc_result || undefined,
-          currentQcId:  po.current_qc_id  || undefined,
+          currentQcId: po.current_qc_id || undefined,
         });
       });
 
@@ -1596,24 +1869,23 @@ export function MachineOperator() {
 
         const products = so.quotations?.quotation_products || [];
         combined.push({
-          id:           so.sample_order_id,
-          type:         "sample",
-          product:      products[0]?.product_name || "Unknown",
-          customer:     so.quotations?.customers?.company_name || "Unknown",
-          quantity:     so.sample_quantity || 0,
-          assignedTo:   so.employees?.full_name || "Unassigned",
-          machine:      "Sample",
-          priority:     "Medium",
-          status:       so.status || "Pending",
-          // sample_orders has no progress column — use 100 if approved else 0
-          progress:     so.status === "Approved" ? 100 : 0,
-          dueDate:      so.due_date   || "",
-          createdDate:  so.created_at || new Date().toISOString(),
-          value:        so.sample_cost || 0,
-          qcCycle:      so.qc_cycle     || 0,
-          reworkCount:  so.rework_count || 0,
+          id: so.sample_order_id,
+          type: "sample",
+          product: products[0]?.product_name || "Unknown",
+          customer: so.quotations?.customers?.company_name || "Unknown",
+          quantity: so.sample_quantity || 0,
+          assignedTo: so.employees?.full_name || "Unassigned",
+          machine: "Sample",
+          priority: "Medium",
+          status: so.status || "Pending",
+          progress: so.status === "Approved" ? 100 : 0,
+          dueDate: so.due_date || "",
+          createdDate: so.created_at || new Date().toISOString(),
+          value: so.sample_cost || 0,
+          qcCycle: so.qc_cycle || 0,
+          reworkCount: so.rework_count || 0,
           lastQcResult: so.last_qc_result || undefined,
-          currentQcId:  so.current_qc_id  || undefined,
+          currentQcId: so.current_qc_id || undefined,
         });
       });
 
@@ -1650,17 +1922,17 @@ export function MachineOperator() {
   }, [loadJobs, loadInventory]);
 
   // ── Stats ──────────────────────────────────────────────────────
-  const totalJobs      = assignedJobs.length;
-  const runningJobs    = assignedJobs.filter((j) => j.status === "In Progress").length;
-  const pendingJobs    = assignedJobs.filter((j) => j.status === "Pending").length;
-  const reworkJobs     = assignedJobs.filter((j) => j.status === "Rework Required").length;
-  const totalUnits     = assignedJobs.reduce((s, j) => s + j.quantity, 0);
+  const totalJobs = assignedJobs.length;
+  const runningJobs = assignedJobs.filter((j) => j.status === "In Progress").length;
+  const pendingJobs = assignedJobs.filter((j) => j.status === "Pending").length;
+  const reworkJobs = assignedJobs.filter((j) => j.status === "Rework Required").length;
+  const totalUnits = assignedJobs.reduce((s, j) => s + j.quantity, 0);
   const completedUnits = assignedJobs.reduce((s, j) => s + j.quantity * (j.progress / 100), 0);
-  const avgProgress    = assignedJobs.length > 0
+  const avgProgress = assignedJobs.length > 0
     ? Math.round(assignedJobs.reduce((s, j) => s + j.progress, 0) / assignedJobs.length)
     : 0;
 
-  const sampleJobs     = assignedJobs.filter((j) => j.type === "sample");
+  const sampleJobs = assignedJobs.filter((j) => j.type === "sample");
   const productionJobs = assignedJobs.filter((j) => j.type === "production");
 
   if (loading) {
@@ -1722,25 +1994,25 @@ export function MachineOperator() {
           {
             label: "My Jobs Today",
             value: totalJobs,
-            sub:   `${runningJobs} running, ${pendingJobs} pending`,
+            sub: `${runningJobs} running, ${pendingJobs} pending`,
             color: "text-indigo-600 bg-indigo-50",
           },
           {
             label: "Units Completed",
             value: Math.round(completedUnits).toLocaleString(),
-            sub:   `of ${totalUnits.toLocaleString()} total`,
+            sub: `of ${totalUnits.toLocaleString()} total`,
             color: "text-green-600 bg-green-50",
           },
           {
             label: "Avg Progress",
             value: `${avgProgress}%`,
-            sub:   "Across all jobs",
+            sub: "Across all jobs",
             color: "text-purple-600 bg-purple-50",
           },
           {
             label: "Rework Required",
             value: reworkJobs,
-            sub:   "Jobs needing rework",
+            sub: "Jobs needing rework",
             color: reworkJobs > 0
               ? "text-red-600 bg-red-50"
               : "text-slate-500 bg-slate-50",
@@ -1843,4 +2115,4 @@ export function MachineOperator() {
       )}
     </div>
   );
-}//mo
+}

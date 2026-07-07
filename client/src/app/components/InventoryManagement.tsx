@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import { AlertTriangle, Package, Plus, Search, TrendingDown, BarChart2, RefreshCw, Edit, Trash2, Save, X, CheckCircle, XCircle, FileText, Printer, Calendar, Download, TrendingUp, Filter } from "lucide-react";
+import { useState, useEffect, useCallback } from "react";
+import { AlertTriangle, Package, Plus, Search, TrendingDown, BarChart2, RefreshCw, Edit, Trash2, Save, X, CheckCircle, XCircle, FileText, Printer, Calendar, Download, TrendingUp, Filter, History } from "lucide-react";
 import { supabase } from "../server/api";
 
 type Category = "All" | "Plate & Master" | "Inks & Chemicals" | "Printer Accessories" | "Gum & Glues" | "Rubber Blankets & Lamination Rolls" | "Binding Accessories" | "Engineering Accessories" | "Other";
@@ -59,6 +59,20 @@ interface MaterialUsageLog {
   inventory_item?: InventoryItem;
 }
 
+interface StockMovementLog {
+  id: number;
+  inventory_item_id: number;
+  movement_type: 'RECEIVED' | 'ISSUED' | 'ADJUSTMENT' | 'OPENING_BALANCE';
+  quantity: number;
+  previous_balance: number;
+  new_balance: number;
+  reference_id?: string;
+  notes?: string;
+  created_by?: number;
+  created_at: string;
+  inventory_item?: InventoryItem;
+}
+
 interface ToastMessage {
   type: 'success' | 'error' | 'info';
   message: string;
@@ -75,12 +89,15 @@ function getStockStatus(current: number, min: number) {
 export function InventoryManagement() {
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [materialUsage, setMaterialUsage] = useState<MaterialUsageLog[]>([]);
+  const [stockMovements, setStockMovements] = useState<StockMovementLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [category, setCategory] = useState<Category>("All");
   const [search, setSearch] = useState("");
   const [showAddModal, setShowAddModal] = useState(false);
   const [showUsageReport, setShowUsageReport] = useState(false);
+  const [showMovementHistory, setShowMovementHistory] = useState(false);
+  const [selectedItemId, setSelectedItemId] = useState<number | null>(null);
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const [formData, setFormData] = useState({
@@ -109,7 +126,7 @@ export function InventoryManagement() {
   const [materialFilter, setMaterialFilter] = useState<string>('all');
 
   // Load inventory from Supabase
-  const loadInventory = async () => {
+  const loadInventory = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -128,18 +145,16 @@ export function InventoryManagement() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  // Load material usage logs with filters - FIXED
-  const loadMaterialUsage = async () => {
+  // Load material usage logs with filters
+  const loadMaterialUsage = useCallback(async () => {
     try {
-      // First, get the material usage logs
       let query = supabase
         .from('material_usage_logs')
         .select('*')
         .order('timestamp', { ascending: false });
 
-      // Apply date range filters
       if (dateRange.from) {
         query = query.gte('timestamp', dateRange.from);
       }
@@ -152,7 +167,6 @@ export function InventoryManagement() {
       if (error) throw error;
 
       if (data && data.length > 0) {
-        // Get all inventory items in one query
         const inventoryIds = [...new Set(data.map(log => log.inventory_item_id))];
         const { data: inventoryData, error: inventoryError } = await supabase
           .from('inventory')
@@ -161,7 +175,6 @@ export function InventoryManagement() {
 
         if (inventoryError) throw inventoryError;
 
-        // Create a map for quick lookup
         const inventoryMap: Record<number, InventoryItem> = {};
         if (inventoryData) {
           inventoryData.forEach((item: any) => {
@@ -169,18 +182,15 @@ export function InventoryManagement() {
           });
         }
 
-        // Combine the data
         let combinedData = data.map(log => ({
           ...log,
           inventory_item: inventoryMap[log.inventory_item_id] || null
         }));
 
-        // Apply job type filter
         if (jobTypeFilter !== 'all') {
           combinedData = combinedData.filter(log => log.job_type === jobTypeFilter);
         }
 
-        // Apply material filter
         if (materialFilter !== 'all') {
           combinedData = combinedData.filter(log =>
             log.inventory_item?.item === materialFilter ||
@@ -194,15 +204,61 @@ export function InventoryManagement() {
       }
     } catch (err) {
       console.error("Failed to load material usage:", err);
-      // Don't set error here to avoid breaking the UI
       setMaterialUsage([]);
     }
-  };
+  }, [dateRange, jobTypeFilter, materialFilter]);
+
+  // Load stock movement history
+  const loadStockMovements = useCallback(async (itemId?: number) => {
+    try {
+      let query = supabase
+        .from('stock_movement_logs')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (itemId) {
+        query = query.eq('inventory_item_id', itemId);
+      }
+
+      const { data, error } = await query;
+
+      if (error) throw error;
+
+      if (data && data.length > 0) {
+        const inventoryIds = [...new Set(data.map(log => log.inventory_item_id))];
+        const { data: inventoryData, error: inventoryError } = await supabase
+          .from('inventory')
+          .select('id, item, unit')
+          .in('id', inventoryIds);
+
+        if (inventoryError) throw inventoryError;
+
+        const inventoryMap: Record<number, InventoryItem> = {};
+        if (inventoryData) {
+          inventoryData.forEach((item: any) => {
+            inventoryMap[item.id] = item;
+          });
+        }
+
+        const combinedData = data.map(log => ({
+          ...log,
+          inventory_item: inventoryMap[log.inventory_item_id] || null
+        }));
+
+        setStockMovements(combinedData);
+      } else {
+        setStockMovements([]);
+      }
+    } catch (err) {
+      console.error("Failed to load stock movements:", err);
+      setStockMovements([]);
+    }
+  }, []);
 
   useEffect(() => {
     loadInventory();
     loadMaterialUsage();
-  }, [dateRange, jobTypeFilter, materialFilter]);
+  }, [loadInventory, loadMaterialUsage]);
 
   // Subscribe to real-time changes
   useEffect(() => {
@@ -236,11 +292,31 @@ export function InventoryManagement() {
       )
       .subscribe();
 
+    const movementSubscription = supabase
+      .channel('movement_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'stock_movement_logs',
+        },
+        () => {
+          if (selectedItemId) {
+            loadStockMovements(selectedItemId);
+          } else {
+            loadStockMovements();
+          }
+        }
+      )
+      .subscribe();
+
     return () => {
       subscription.unsubscribe();
       usageSubscription.unsubscribe();
+      movementSubscription.unsubscribe();
     };
-  }, []);
+  }, [loadInventory, loadMaterialUsage, loadStockMovements, selectedItemId]);
 
   // Auto-dismiss toast after 5 seconds
   useEffect(() => {
@@ -282,6 +358,54 @@ export function InventoryManagement() {
     )
   );
 
+  // Get current employee for logging
+  const getCurrentEmployee = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return null;
+      const { data: emp } = await supabase
+        .from('employees')
+        .select('employee_id')
+        .eq('auth_user_id', user.id)
+        .single();
+      return emp?.employee_id || null;
+    } catch {
+      return null;
+    }
+  };
+
+  // Log stock movement
+  const logStockMovement = async (
+    itemId: number,
+    movementType: 'RECEIVED' | 'ISSUED' | 'ADJUSTMENT' | 'OPENING_BALANCE',
+    quantity: number,
+    previousBalance: number,
+    newBalance: number,
+    referenceId?: string,
+    notes?: string
+  ) => {
+    try {
+      const employeeId = await getCurrentEmployee();
+      const { error } = await supabase
+        .from('stock_movement_logs')
+        .insert([{
+          inventory_item_id: itemId,
+          movement_type: movementType,
+          quantity: quantity,
+          previous_balance: previousBalance,
+          new_balance: newBalance,
+          reference_id: referenceId || null,
+          notes: notes || null,
+          created_by: employeeId,
+          created_at: new Date().toISOString(),
+        }]);
+
+      if (error) throw error;
+    } catch (err) {
+      console.error("Failed to log stock movement:", err);
+    }
+  };
+
   // Handle Add/Update Inventory
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -296,6 +420,13 @@ export function InventoryManagement() {
     }
     if (formData.current < 0) {
       setToast({ type: 'error', message: "Current stock cannot be negative" });
+      return;
+    }
+
+    // Validate: Issued cannot exceed total stock
+    const totalStock = formData.opening_balance + formData.received;
+    if (formData.issued > totalStock) {
+      setToast({ type: 'error', message: "Issued quantity cannot exceed total stock (Opening Balance + Received)" });
       return;
     }
 
@@ -324,22 +455,53 @@ export function InventoryManagement() {
       };
 
       if (editingItem) {
+        // Get previous balance for logging
+        const previousBalance = editingItem.current || 0;
+
         const { error } = await supabase
           .from('inventory')
           .update(payload)
           .eq('id', editingItem.id);
 
         if (error) throw error;
+
+        // Log the update
+        await logStockMovement(
+          editingItem.id,
+          'ADJUSTMENT',
+          closing_balance - previousBalance,
+          previousBalance,
+          closing_balance,
+          undefined,
+          `Updated from ${previousBalance} to ${closing_balance}`
+        );
+
         setToast({ type: 'success', message: "✅ Inventory item updated successfully!" });
       } else {
-        const { error } = await supabase
+        const { data, error } = await supabase
           .from('inventory')
           .insert([{
             ...payload,
             created_at: new Date().toISOString(),
-          }]);
+          }])
+          .select()
+          .single();
 
         if (error) throw error;
+
+        // Log opening balance
+        if (data && closing_balance > 0) {
+          await logStockMovement(
+            data.id,
+            'OPENING_BALANCE',
+            closing_balance,
+            0,
+            closing_balance,
+            undefined,
+            'Initial stock entry'
+          );
+        }
+
         setToast({ type: 'success', message: "✅ Inventory item added successfully!" });
       }
 
@@ -413,11 +575,21 @@ export function InventoryManagement() {
     setShowAddModal(false);
   };
 
-  // Reset filters
-  const resetFilters = () => {
+  // Reset all filters including search and category
+  const resetAllFilters = () => {
+    setSearch("");
+    setCategory("All");
     setDateRange({ from: '', to: '' });
     setJobTypeFilter('all');
     setMaterialFilter('all');
+    setCurrentPage(1);
+  };
+
+  // View movement history for an item
+  const handleViewMovementHistory = async (itemId: number) => {
+    setSelectedItemId(itemId);
+    await loadStockMovements(itemId);
+    setShowMovementHistory(true);
   };
 
   // Export to CSV
@@ -502,7 +674,7 @@ export function InventoryManagement() {
     .sort((a, b) => b[1].used - a[1].used)
     .slice(0, 5);
 
-  if (loading) {
+  if (loading && inventory.length === 0) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="flex flex-col items-center gap-3">
@@ -534,7 +706,7 @@ export function InventoryManagement() {
         </div>
       )}
 
-      {/* Add/Edit Modal - Same as before */}
+      {/* Add/Edit Modal */}
       {showAddModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
@@ -630,6 +802,88 @@ export function InventoryManagement() {
         </div>
       )}
 
+      {/* Movement History Modal */}
+      {showMovementHistory && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 sticky top-0 bg-white">
+              <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                <History size={20} className="text-indigo-600" />
+                Stock Movement History
+                {selectedItemId && (
+                  <span className="text-sm font-normal text-slate-500 ml-2">
+                    {inventory.find(i => i.id === selectedItemId)?.item}
+                  </span>
+                )}
+              </h3>
+              <button onClick={() => { setShowMovementHistory(false); setSelectedItemId(null); }} className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 transition-colors">
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="p-6">
+              {stockMovements.length === 0 ? (
+                <div className="text-center py-8 text-slate-400">
+                  <History size={48} className="mx-auto mb-3 text-slate-300" />
+                  <p className="text-sm">No stock movements recorded for this item</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-200">
+                        {["Date", "Type", "Quantity", "Previous Balance", "New Balance", "Reference", "Notes"].map((h) => (
+                          <th key={h} className="text-left text-xs text-slate-500 px-4 py-2.5 whitespace-nowrap font-medium">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {stockMovements.map((movement) => (
+                        <tr key={movement.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
+                          <td className="px-4 py-3 text-xs text-slate-600">
+                            {new Date(movement.created_at).toLocaleString()}
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className={`text-xs px-2 py-0.5 rounded font-medium ${movement.movement_type === 'RECEIVED' ? 'bg-green-100 text-green-700' :
+                                movement.movement_type === 'ISSUED' ? 'bg-red-100 text-red-700' :
+                                  movement.movement_type === 'OPENING_BALANCE' ? 'bg-blue-100 text-blue-700' :
+                                    'bg-amber-100 text-amber-700'
+                              }`}>
+                              {movement.movement_type}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-xs font-semibold">
+                            <span className={movement.movement_type === 'RECEIVED' ? 'text-green-600' : movement.movement_type === 'ISSUED' ? 'text-red-600' : 'text-slate-700'}>
+                              {movement.movement_type === 'RECEIVED' ? '+' : movement.movement_type === 'ISSUED' ? '-' : ''}
+                              {movement.quantity} {movement.inventory_item?.unit || ''}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-xs text-slate-600">{movement.previous_balance}</td>
+                          <td className="px-4 py-3 text-xs font-semibold text-indigo-600">{movement.new_balance}</td>
+                          <td className="px-4 py-3 text-xs text-slate-500">{movement.reference_id || '-'}</td>
+                          <td className="px-4 py-3 text-xs text-slate-500 max-w-[150px] truncate" title={movement.notes || ''}>
+                            {movement.notes || '-'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            <div className="px-6 py-4 border-t border-slate-100 bg-slate-50 rounded-b-2xl flex justify-end">
+              <button
+                onClick={() => { setShowMovementHistory(false); setSelectedItemId(null); }}
+                className="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 transition-colors text-sm font-medium"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
@@ -687,10 +941,10 @@ export function InventoryManagement() {
             </div>
             <div className="flex items-center gap-2 flex-wrap">
               <button
-                onClick={resetFilters}
+                onClick={resetAllFilters}
                 className="flex items-center gap-1 px-2 py-1 text-xs border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 transition-colors bg-white"
               >
-                <RefreshCw size={10} /> Reset Filters
+                <RefreshCw size={10} /> Reset All Filters
               </button>
               <button
                 onClick={handleExportUsageReport}
@@ -751,7 +1005,7 @@ export function InventoryManagement() {
 
             {(dateRange.from || dateRange.to || jobTypeFilter !== 'all' || materialFilter !== 'all') && (
               <button
-                onClick={resetFilters}
+                onClick={resetAllFilters}
                 className="text-xs text-red-500 hover:text-red-700 flex items-center gap-1"
               >
                 <X size={12} /> Clear Filters
@@ -886,6 +1140,12 @@ export function InventoryManagement() {
               <option key={c} value={c}>{c}</option>
             ))}
           </select>
+          <button
+            onClick={resetAllFilters}
+            className="text-xs text-slate-400 hover:text-slate-600 flex items-center gap-1"
+          >
+            <X size={12} /> Clear Filters
+          </button>
           <span className="text-xs text-slate-400 ml-auto">
             Showing {filtered.length} items
           </span>
@@ -931,6 +1191,9 @@ export function InventoryManagement() {
                       <div className="flex items-center gap-1">
                         <button onClick={() => handleEdit(item)} className="p-1 text-slate-400 hover:text-indigo-600 rounded hover:bg-indigo-50 transition-colors" title="Edit">
                           <Edit size={14} />
+                        </button>
+                        <button onClick={() => handleViewMovementHistory(item.id)} className="p-1 text-slate-400 hover:text-indigo-600 rounded hover:bg-indigo-50 transition-colors" title="View Movement History">
+                          <History size={14} />
                         </button>
                         <button onClick={() => handleDelete(item.id)} className="p-1 text-slate-400 hover:text-red-600 rounded hover:bg-red-50 transition-colors" title="Delete">
                           <Trash2 size={14} />

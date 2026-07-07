@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
-
 import {
-  Plus, FileText, CheckCircle, Clock, XCircle, Printer, Download, Send,
+  Plus, FileText, CheckCircle, Clock, XCircle, Download, Send,
   X, AlertCircle, Calendar, User, DollarSign, Activity, ChevronDown,
   Package, Layers, ArrowRight, Lock, Copy, RefreshCcw, ThumbsUp,
   Settings, Factory, Truck, FlaskConical, Check, RefreshCw,
@@ -489,19 +488,234 @@ function QuotationDetail({ quotation: q, onClose, onUpdate }: QuotationDetailPro
             </div>
           </div>
 
-          {/* Reject with Refund Modal - same as before */}
+          {/* Reject with Refund Modal */}
           {showRejectModal && (
-            // ... (keep existing reject modal code)
             <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[70] p-4">
-              {/* ... existing reject modal content ... */}
+              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
+                <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+                  <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                    <XCircle size={20} className="text-red-500" /> Reject with Refund
+                  </h3>
+                  <button
+                    onClick={() => setShowRejectModal(false)}
+                    className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 transition-colors"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+
+                <div className="p-6 space-y-4">
+                  <div className="bg-slate-50 rounded-xl p-4 border border-slate-200">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-slate-500">Quotation</span>
+                      <span className="font-semibold">{q.id}</span>
+                    </div>
+                    <div className="flex justify-between text-sm mt-1">
+                      <span className="text-slate-500">Customer</span>
+                      <span className="font-semibold">{q.customer}</span>
+                    </div>
+                    <div className="flex justify-between text-sm mt-1">
+                      <span className="text-slate-500">Total Amount</span>
+                      <span className="font-bold text-indigo-600">₹{q.commercials.total.toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-between text-sm mt-1">
+                      <span className="text-slate-500">Advance Received</span>
+                      <span className="font-semibold text-amber-600">₹{advanceAmount.toLocaleString()}</span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Rejection Reason *</label>
+                    <textarea
+                      value={rejectData.reason}
+                      onChange={(e) => setRejectData({ ...rejectData, reason: e.target.value })}
+                      rows={3}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-400 resize-none"
+                      placeholder="Provide a reason for rejecting this quotation..."
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Refund Amount (₹)</label>
+                    <input
+                      type="number"
+                      value={rejectData.refundAmount}
+                      onChange={(e) => setRejectData({ ...rejectData, refundAmount: parseFloat(e.target.value) || 0 })}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-400"
+                      placeholder="Enter refund amount"
+                    />
+                    <p className="text-xs text-slate-400 mt-1">
+                      Max refund: ₹{advanceAmount.toLocaleString()} (Advance amount paid by customer)
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Refund Method</label>
+                    <select
+                      value={rejectData.refundMethod}
+                      onChange={(e) => setRejectData({ ...rejectData, refundMethod: e.target.value })}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-400"
+                    >
+                      <option value="Bank Transfer">Bank Transfer</option>
+                      <option value="Credit Card">Credit Card</option>
+                      <option value="Cash">Cash</option>
+                      <option value="Cheque">Cheque</option>
+                      <option value="UPI">UPI</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Refund Notes</label>
+                    <textarea
+                      value={rejectData.refundNotes}
+                      onChange={(e) => setRejectData({ ...rejectData, refundNotes: e.target.value })}
+                      rows={2}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-400 resize-none"
+                      placeholder="Additional notes about the refund..."
+                    />
+                  </div>
+                </div>
+
+                <div className="px-6 py-4 border-t border-slate-100 bg-slate-50 rounded-b-2xl flex justify-end gap-3">
+                  <button
+                    onClick={() => setShowRejectModal(false)}
+                    className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleRejectWithRefund}
+                    disabled={creating || !rejectData.reason.trim()}
+                    className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                  >
+                    {creating ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        Processing...
+                      </>
+                    ) : (
+                      <>
+                        <XCircle size={16} /> Reject & Refund
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
             </div>
           )}
 
-          {/* Advance Payment Modal - same as before */}
+          {/* Advance Payment Modal */}
           {showAdvancePaymentModal && (
-            // ... (keep existing advance payment modal code)
             <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[70] p-4">
-              {/* ... existing advance payment modal content ... */}
+              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
+                <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+                  <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                    <DollarSign size={20} className="text-green-600" /> Record Advance Payment
+                  </h3>
+                  <button
+                    onClick={() => setShowAdvancePaymentModal(false)}
+                    className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 transition-colors"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+
+                <div className="p-6 space-y-4">
+                  <div className="bg-slate-50 rounded-xl p-4 border border-slate-200">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-slate-500">Quotation</span>
+                      <span className="font-semibold">{q.id}</span>
+                    </div>
+                    <div className="flex justify-between text-sm mt-1">
+                      <span className="text-slate-500">Total Amount</span>
+                      <span className="font-bold text-indigo-600">₹{q.commercials.total.toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-between text-sm mt-1">
+                      <span className="text-slate-500">Advance Required ({q.commercials.advanceRequiredPct}%)</span>
+                      <span className="font-semibold text-amber-600">₹{requiredAdvance.toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-between text-sm mt-1">
+                      <span className="text-slate-500">Already Received</span>
+                      <span className="font-semibold text-green-600">₹{q.commercials.advanceReceivedAmt.toLocaleString()}</span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Amount *</label>
+                    <input
+                      type="number"
+                      value={advancePayment.amount || ''}
+                      onChange={(e) => setAdvancePayment({ ...advancePayment, amount: parseFloat(e.target.value) || 0 })}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-400"
+                      placeholder="Enter advance amount"
+                    />
+                    <p className="text-xs text-slate-400 mt-1">
+                      Max: ₹{(requiredAdvance - q.commercials.advanceReceivedAmt).toLocaleString()}
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Payment Method</label>
+                    <select
+                      value={advancePayment.method}
+                      onChange={(e) => setAdvancePayment({ ...advancePayment, method: e.target.value })}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-400"
+                    >
+                      <option value="Bank Transfer">Bank Transfer</option>
+                      <option value="Cash">Cash</option>
+                      <option value="Cheque">Cheque</option>
+                      <option value="UPI">UPI</option>
+                      <option value="Credit Card">Credit Card</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Payment Date</label>
+                    <input
+                      type="date"
+                      value={advancePayment.date}
+                      onChange={(e) => setAdvancePayment({ ...advancePayment, date: e.target.value })}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-400"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Notes</label>
+                    <textarea
+                      value={advancePayment.notes}
+                      onChange={(e) => setAdvancePayment({ ...advancePayment, notes: e.target.value })}
+                      rows={2}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-400 resize-none"
+                      placeholder="Additional notes about the payment..."
+                    />
+                  </div>
+                </div>
+
+                <div className="px-6 py-4 border-t border-slate-100 bg-slate-50 rounded-b-2xl flex justify-end gap-3">
+                  <button
+                    onClick={() => setShowAdvancePaymentModal(false)}
+                    className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleAdvancePayment}
+                    disabled={recordingAdvance || advancePayment.amount <= 0}
+                    className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                  >
+                    {recordingAdvance ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        Recording...
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle size={16} /> Record Payment
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
             </div>
           )}
 
@@ -912,7 +1126,6 @@ function QuotationDetail({ quotation: q, onClose, onUpdate }: QuotationDetailPro
 }
 
 export function QuotationManagement() {
-  // ... (rest of the QuotationManagement component remains the same)
   const navigate = useNavigate();
   const [quotations, setQuotations] = useState<QuotationData[]>([]);
   const [loading, setLoading] = useState(true);
